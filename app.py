@@ -33,7 +33,7 @@ def check_password():
     return True
 
 if not check_password():
-    st.stop()  # Stoppe le code ici si le mot de passe n'est pas bon !
+    st.stop()
 
 # --- 3. CONNEXION À GOOGLE SHEETS ---
 @st.cache_resource
@@ -260,6 +260,12 @@ if st.sidebar.button("🔄 Recharger l'application", use_container_width=True):
 
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
+    
+    # BOUTON D'ACTUALISATION EN HAUT
+    if st.button("🔄 Actualiser les cours", use_container_width=True):
+        actualiser_cours_internet(silencieux=False)
+        st.rerun()
+        
     df_actuel = st.session_state.donnees
     df_p = st.session_state.projections
     
@@ -367,6 +373,12 @@ elif page_choisie == "📋 Liste des actifs":
     c3.metric("Répartition Totale", f"{round(somme_p, 2):.2f}%", f"{round(100 - somme_p, 2):.2f}% restant", delta_color="inverse" if somme_p > 100 else "normal")
 
     st.divider()
+
+    # BOUTON D'ACTUALISATION POSITIONNÉ ICI (AU DESSUS DU TABLEAU)
+    if st.button("🔄 Actualiser les cours", use_container_width=True):
+        actualiser_cours_internet(silencieux=False)
+        st.rerun()
+
     config_actifs = {
         "Ticker": st.column_config.TextColumn("Ticker ✍️"),
         "Type": st.column_config.SelectboxColumn("Type ✍️", options=["🛢️ Action", "📜 Obligation", "💰 Or-BTC", "💵 Cash"]),
@@ -385,10 +397,6 @@ elif page_choisie == "📋 Liste des actifs":
         st.session_state.donnees = new_df
         recalculer_totaux_locaux()
         save_sheet("Donnees", st.session_state.donnees)
-        st.rerun()
-
-    if st.button("🔄 Actualiser les cours (Manuel)", use_container_width=True):
-        actualiser_cours_internet(silencieux=False)
         st.rerun()
 
 elif page_choisie == "⚖️ Rééquilibrage":
