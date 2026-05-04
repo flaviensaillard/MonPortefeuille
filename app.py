@@ -39,10 +39,8 @@ if not check_password():
 @st.cache_resource
 def init_google_sheets():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    # On lit le fichier JSON secret depuis les variables Streamlit
     credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     gc = gspread.authorize(credentials)
-    # L'ID de ton fichier Google Sheets
     sh = gc.open_by_key("1hkZoHQ1vvtbI1DYHR_OnofWn4jG92JGyxJjN-FedsWk")
     return sh
 
@@ -370,12 +368,13 @@ elif page_choisie == "📋 Liste des actifs":
     c3.metric("Répartition Totale", f"{round(somme_p, 2):.2f}%", f"{round(100 - somme_p, 2):.2f}% restant", delta_color="inverse" if somme_p > 100 else "normal")
 
     st.divider()
+    # IC EST LA CORRECTION DES VERROUS
     config_actifs = {
         "Ticker": st.column_config.TextColumn("Ticker ✍️"),
         "Type": st.column_config.SelectboxColumn("Type ✍️", options=["🛢️ Action", "📜 Obligation", "💰 Or-BTC", "💵 Cash"]),
         "Quantité": st.column_config.TextColumn("Quantité ✍️"),
         "Pourcentage (%)": st.column_config.NumberColumn("Pourcentage (%) ✍️", format="%.2f%%"),
-        "Court": st.column_config.TextColumn("Court ✍️ (Auto/Man)"),
+        "Court": st.column_config.TextColumn("Court 🔒", disabled=True),
         "Valeur totale": st.column_config.TextColumn("Valeur totale 🔒", disabled=True)
     }
     
