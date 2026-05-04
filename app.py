@@ -353,7 +353,6 @@ if page_choisie == "📊 Tableau de bord":
 
 elif page_choisie == "📋 Liste des actifs":
     st.title("📋 Liste de mes actifs")
-    st.write("Astuce : Pour saisir manuellement le prix d'un actif rare, supprimez son 'Ticker' (laissez-le vide) et tapez le prix dans 'Court'. Il ne sera jamais écrasé !")
     
     df_actuel = st.session_state.donnees
     val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if not est_devise_liquide(r["Ticker"]))
@@ -368,7 +367,6 @@ elif page_choisie == "📋 Liste des actifs":
     c3.metric("Répartition Totale", f"{round(somme_p, 2):.2f}%", f"{round(100 - somme_p, 2):.2f}% restant", delta_color="inverse" if somme_p > 100 else "normal")
 
     st.divider()
-    # IC EST LA CORRECTION DES VERROUS
     config_actifs = {
         "Ticker": st.column_config.TextColumn("Ticker ✍️"),
         "Type": st.column_config.SelectboxColumn("Type ✍️", options=["🛢️ Action", "📜 Obligation", "💰 Or-BTC", "💵 Cash"]),
