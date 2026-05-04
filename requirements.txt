@@ -1,0 +1,7 @@
+streamlit
+pandas
+yfinance
+plotly
+streamlit-autorefresh
+gspread
+gspread-dataframe
