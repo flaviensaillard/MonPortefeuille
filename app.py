@@ -261,7 +261,6 @@ if st.sidebar.button("🔄 Recharger l'application", use_container_width=True):
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
     
-    # BOUTON D'ACTUALISATION EN HAUT
     if st.button("🔄 Actualiser les cours", use_container_width=True):
         actualiser_cours_internet(silencieux=False)
         st.rerun()
@@ -269,7 +268,8 @@ if page_choisie == "📊 Tableau de bord":
     df_actuel = st.session_state.donnees
     df_p = st.session_state.projections
     
-    val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if not est_devise_liquide(r["Ticker"]))
+    # MODIFICATION : Uniquement les actifs présents dans rééquilibrage (Pct > 0)
+    val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
     val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
     
     delta = pct_delta = 0.0
@@ -280,7 +280,7 @@ if page_choisie == "📊 Tableau de bord":
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Global", f"$ {val_total:,.2f}")
-    c2.metric("Actifs (Invest + BTC)", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis MAJ)")
+    c2.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis MAJ)")
     st.divider()
     
     if df_p.empty: st.info("Aucune donnée disponible. Figez d'abord une situation dans l'onglet '🏖️ Suivi'.")
@@ -333,15 +333,19 @@ if page_choisie == "📊 Tableau de bord":
                 else: st.line_chart(df_viz['Score TWR %'])
             
             st.divider()
-            st.subheader("🥧 Répartition du Portefeuille")
+            st.subheader("🥧 Répartition de la Stratégie (Rééquilibrage)")
             
             df_actifs = st.session_state.donnees.copy()
             df_actifs['Val_Num'] = df_actifs['Valeur totale'].apply(extraire_nombre)
+            df_actifs['Pct_Cible'] = df_actifs['Pourcentage (%)'].apply(extraire_nombre)
+            
+            # FILTRE : Uniquement les actifs cibles
+            df_strat = df_actifs[df_actifs['Pct_Cible'] > 0]
             
             c_p1, c_p2 = st.columns(2)
             with c_p1:
-                st.markdown("**Classes d'actifs**")
-                df_pie1 = df_actifs[df_actifs['Val_Num'] > 0].groupby('Type')['Val_Num'].sum().reset_index()
+                st.markdown("**Classes d'actifs ciblées**")
+                df_pie1 = df_strat[df_strat['Val_Num'] > 0].groupby('Type')['Val_Num'].sum().reset_index()
                 if not df_pie1.empty:
                     fig1 = px.pie(df_pie1, values='Val_Num', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or-BTC": "#f1c40f", "💵 Cash": "#2ecc71"}, hole=0.4)
                     fig1.update_traces(textposition='inside', textinfo='percent+label')
@@ -349,10 +353,9 @@ if page_choisie == "📊 Tableau de bord":
                     st.plotly_chart(fig1, use_container_width=True)
 
             with c_p2:
-                st.markdown("**Détail des Devises (Cash uniquement)**")
-                df_cash = df_actifs[(df_actifs['Type'] == "💵 Cash") & (df_actifs['Val_Num'] > 0)]
-                if not df_cash.empty:
-                    fig2 = px.pie(df_cash, values='Val_Num', names='Ticker', hole=0.4)
+                st.markdown("**Détail des lignes stratégiques**")
+                if not df_strat.empty:
+                    fig2 = px.pie(df_strat[df_strat['Val_Num'] > 0], values='Val_Num', names='Ticker', hole=0.4)
                     fig2.update_traces(textposition='inside', textinfo='percent+label')
                     fig2.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10))
                     st.plotly_chart(fig2, use_container_width=True)
@@ -361,20 +364,20 @@ elif page_choisie == "📋 Liste des actifs":
     st.title("📋 Liste de mes actifs")
     
     df_actuel = st.session_state.donnees
-    val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if not est_devise_liquide(r["Ticker"]))
+    # Affichage cohérent avec le dashboard
+    val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
     val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
     somme_p = sum(extraire_nombre(r["Pourcentage (%)"]) for _, r in df_actuel.iterrows())
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Actifs (Invest + BTC)", f"$ {val_invest:,.2f}".replace(',',' '))
+    c1.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}".replace(',',' '))
     c1.caption(f"soit {val_invest / TAUX_EUR_USD:,.2f} €")
     c2.metric("Total Global", f"$ {val_total:,.2f}".replace(',',' '))
     c2.caption(f"soit {val_total / TAUX_EUR_USD:,.2f} €")
-    c3.metric("Répartition Totale", f"{round(somme_p, 2):.2f}%", f"{round(100 - somme_p, 2):.2f}% restant", delta_color="inverse" if somme_p > 100 else "normal")
+    c3.metric("Répartition Cible", f"{round(somme_p, 2):.2f}%", f"{round(100 - somme_p, 2):.2f}% restant", delta_color="inverse" if somme_p > 100 else "normal")
 
     st.divider()
 
-    # BOUTON D'ACTUALISATION POSITIONNÉ ICI (AU DESSUS DU TABLEAU)
     if st.button("🔄 Actualiser les cours", use_container_width=True):
         actualiser_cours_internet(silencieux=False)
         st.rerun()
@@ -405,14 +408,13 @@ elif page_choisie == "⚖️ Rééquilibrage":
     st.divider()
     df = st.session_state.donnees
     
-    base_reeq = sum(extraire_nombre(r["Valeur totale"]) for _, r in df.iterrows() if not est_devise_liquide(r["Ticker"]) and extraire_nombre(r["Pourcentage (%)"]) > 0)
+    base_reeq = sum(extraire_nombre(r["Valeur totale"]) for _, r in df.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
     new_base = base_reeq + cash_dispo
     
     if new_base > 0:
         reeq_list = []
         for _, row in df.iterrows():
             tick = str(row["Ticker"]).upper()
-            if est_devise_liquide(tick) or tick == "" or tick == "NAN": continue
             pct_cib = extraire_nombre(row["Pourcentage (%)"]) / 100
             if pct_cib == 0: continue
             
@@ -471,7 +473,8 @@ elif page_choisie == "🏖️ Suivi":
     
     if st.button("📸 MAJ Graphiques", use_container_width=True, type="primary"):
         cap = sum(row["Montant $"] if "ajout" in row["Type"].lower() else -row["Montant $"] for _, row in st.session_state.historique.iterrows())
-        act = sum(extraire_nombre(r["Valeur totale"]) for _, r in st.session_state.donnees.iterrows() if not est_devise_liquide(r["Ticker"]))
+        # MODIFICATION : Ici aussi on ne suit que les actifs cibles pour la performance
+        act = sum(extraire_nombre(r["Valeur totale"]) for _, r in st.session_state.donnees.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
         epg = sum(extraire_nombre(r["Valeur totale"]) for _, r in st.session_state.donnees.iterrows())
         nl = {"Date": datetime.datetime.now().strftime("%d/%m/%Y"), "Capital investi": cap, "Actifs": act, "Epargne totale": epg}
         st.session_state.projections = recalculer_toute_la_base_projections(pd.concat([st.session_state.projections, pd.DataFrame([nl])], ignore_index=True))
@@ -581,7 +584,7 @@ elif page_choisie == "🌴 Retraite":
     st.write("Ce simulateur projette la valeur de votre portefeuille jusqu'à votre retraite et calcule la rente mensuelle perpétuelle que vous pourrez en tirer sans jamais entamer votre capital (en pouvoir d'achat réel).")
 
     df_actuel = st.session_state.donnees
-    capital_initial = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if not est_devise_liquide(r["Ticker"]))
+    capital_initial = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
     
     annee_en_cours = datetime.datetime.now().year
     moy_brute_hist = 5.00
