@@ -336,6 +336,29 @@ if page_choisie == "📊 Tableau de bord":
     c3.caption(f"🏖️ Pouvoir d'achat : **{rente_mensuelle_usd / TAUX_EUR_USD:,.2f} € / mois**")
     
     st.divider()
+
+    # --- INDICATEUR VISUEL DE RÉÉQUILIBRAGE ---
+    besoin_reequilibrage = False
+    if val_invest > 0:
+        for _, row in df_actuel.iterrows():
+            pct_cib = extraire_nombre(row["Pourcentage (%)"]) / 100
+            if pct_cib == 0: continue
+            
+            val_act = extraire_nombre(row["Valeur totale"])
+            diff = (val_invest * pct_cib) - val_act
+            pct_reel = (val_act / val_invest) * 100
+            
+            # La règle de déséquilibre : PLUS DE 1000$ ET PLUS DE 2% D'ÉCART
+            if abs(diff) >= 1000 and abs(pct_reel - (pct_cib * 100)) >= 2.0:
+                besoin_reequilibrage = True
+                break
+
+    if besoin_reequilibrage:
+        st.warning("⚠️ **Rééquilibrage nécessaire** (Certains de vos actifs ont dépassé les tolérances. Consultez l'onglet Rééquilibrage.)")
+    else:
+        st.success("✅ **Équilibré** (Votre stratégie d'allocation cible est actuellement respectée.)")
+
+    st.divider()
     
     if df_p.empty: st.info("Aucune donnée disponible. Figez d'abord une situation dans l'onglet '🏖️ Suivi'.")
     else:
@@ -485,7 +508,6 @@ elif page_choisie == "⚖️ Rééquilibrage":
             qte_fmt = f"{abs(round(qte, 6)):.6f}" if "BTC" in tick else f"{abs(int(round(qte)))}"
             signe = "+ " if qte > 0.000001 else "- " if qte < -0.000001 else ""
             
-            # CORRECTION DE LA LOGIQUE : OU au lieu de ET
             if abs(diff) < 1000 or abs(pct_reel - (pct_cib * 100)) < 2.0: 
                 action, qte_str = "✅ ÉQUILIBRÉ", f"({signe}{qte_fmt})"
             else: 
