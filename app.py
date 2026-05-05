@@ -101,46 +101,41 @@ def nettoyer_dataframe(df):
 def recalculer_toute_la_base_projections(df):
     if df is None or df.empty: return df
     df_travail = df.copy()
-    colonnes_base = ["Date", "Capital investi", "Actifs", "Epargne totale"]
+    colonnes_base = ["Date", "Capital investi", "Actifs Stratégiques", "Total Global"]
     
     if not all(c in df_travail.columns for c in colonnes_base):
         for i, nom in enumerate(colonnes_base):
             if i < len(df_travail.columns): df_travail.rename(columns={df_travail.columns[i]: nom}, inplace=True)
 
-    for col in ["Capital investi", "Actifs", "Epargne totale"]:
+    for col in ["Capital investi", "Actifs Stratégiques", "Total Global"]:
         df_travail[col] = df_travail[col].apply(extraire_nombre)
 
     df_travail['DT_TRI'] = pd.to_datetime(df_travail['Date'], dayfirst=True, errors='coerce')
     df_travail = df_travail.sort_values('DT_TRI').reset_index(drop=True)
     
     resultats = []
-    first_epargne = df_travail.at[0, "Epargne totale"] if len(df_travail) > 0 else 0
     current_twr_mult = 1.0
 
     for i in range(len(df_travail)):
         row = df_travail.iloc[i].to_dict()
         cap = row["Capital investi"]
-        actifs = row["Actifs"]
-        epg = row["Epargne totale"]
+        actifs = row["Actifs Stratégiques"]
         
         if i == 0:
             row["Evolution actifs $"] = 0.0 ; row["Evolution actifs %"] = 0.0
             row["Evolution cumulée $"] = actifs - cap
             row["Evolution cumulée %"] = ((actifs - cap) / cap * 100) if cap != 0 else 0.0
-            row["Plus-value Épargne $"] = 0.0 ; row["Plus-value Épargne %"] = 0.0
             r_twr = (actifs - cap) / cap if cap != 0 else 0.0
             current_twr_mult *= (1 + r_twr)
         else:
             prev = df_travail.iloc[i-1]
             diff_cap = cap - prev["Capital investi"]
-            evo_usd = (actifs - prev["Actifs"]) - diff_cap
+            evo_usd = (actifs - prev["Actifs Stratégiques"]) - diff_cap
             row["Evolution actifs $"] = evo_usd
-            row["Evolution actifs %"] = (evo_usd / prev["Actifs"] * 100) if prev["Actifs"] != 0 else 0.0
+            row["Evolution actifs %"] = (evo_usd / prev["Actifs Stratégiques"] * 100) if prev["Actifs Stratégiques"] != 0 else 0.0
             row["Evolution cumulée $"] = actifs - cap
             row["Evolution cumulée %"] = ((actifs - cap) / cap * 100) if cap != 0 else 0.0
-            row["Plus-value Épargne $"] = epg - first_epargne
-            row["Plus-value Épargne %"] = ((epg - first_epargne) / first_epargne * 100) if first_epargne != 0 else 0.0
-            base_twr = prev["Actifs"] + diff_cap
+            base_twr = prev["Actifs Stratégiques"] + diff_cap
             r_twr = evo_usd / base_twr if base_twr != 0 else 0.0
             current_twr_mult *= (1 + r_twr)
             
@@ -149,7 +144,7 @@ def recalculer_toute_la_base_projections(df):
     
     df_final = pd.DataFrame(resultats)
     if 'DT_TRI' in df_final.columns: df_final.drop(columns=['DT_TRI'], inplace=True)
-    ordre = ["Date", "Capital investi", "Actifs", "Epargne totale", "Evolution actifs $", "Evolution actifs %", "Evolution cumulée $", "Evolution cumulée %", "Plus-value Épargne $", "Plus-value Épargne %", "Score TWR %"]
+    ordre = ["Date", "Capital investi", "Actifs Stratégiques", "Total Global", "Evolution actifs $", "Evolution actifs %", "Evolution cumulée $", "Evolution cumulée %", "Score TWR %"]
     return df_final[ordre]
 
 def recalculer_totaux_locaux():
@@ -313,7 +308,7 @@ if page_choisie == "📊 Tableau de bord":
     
     delta = pct_delta = 0.0
     if not df_p.empty:
-        derniere_val = extraire_nombre(df_p.iloc[-1]["Actifs"])
+        derniere_val = extraire_nombre(df_p.iloc[-1]["Actifs Stratégiques"])
         delta = val_invest - derniere_val
         if derniere_val > 0: pct_delta = (delta / derniere_val) * 100
 
@@ -321,7 +316,7 @@ if page_choisie == "📊 Tableau de bord":
     c1.metric("Total Global", f"$ {val_total:,.2f}")
     c1.caption(f"🌍 Soit : **{val_total / TAUX_EUR_USD:,.2f} €**")
     
-    c2.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis MAJ)")
+    c2.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
     
     color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
     symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
@@ -378,7 +373,7 @@ if page_choisie == "📊 Tableau de bord":
             df_viz.set_index('Date_DT', inplace=True)
             val_debut = df_viz['Evolution cumulée $'].iloc[0]
             val_fin = df_viz['Evolution cumulée $'].iloc[-1]
-            actifs_debut = df_viz['Actifs'].iloc[0]
+            actifs_debut = df_viz['Actifs Stratégiques'].iloc[0]
             
             delta_usd = val_fin - val_debut
             pct_periode = (delta_usd / actifs_debut * 100) if actifs_debut > 0 else 0.0
@@ -412,7 +407,6 @@ if page_choisie == "📊 Tableau de bord":
                 st.plotly_chart(fig_line, use_container_width=True)
             
             st.divider()
-            # MODIFICATION ICI : Emoji cible (🎯)
             st.subheader("🎯 Répartition de la Stratégie")
             
             df_actifs = st.session_state.donnees.copy()
@@ -564,7 +558,7 @@ elif page_choisie == "🏖️ Suivi":
         cap = sum(row["Montant $"] if "ajout" in row["Type"].lower() else -row["Montant $"] for _, row in st.session_state.historique.iterrows())
         act = sum(extraire_nombre(r["Valeur totale"]) for _, r in st.session_state.donnees.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
         epg = sum(extraire_nombre(r["Valeur totale"]) for _, r in st.session_state.donnees.iterrows())
-        nl = {"Date": datetime.datetime.now().strftime("%d/%m/%Y"), "Capital investi": cap, "Actifs": act, "Epargne totale": epg}
+        nl = {"Date": datetime.datetime.now().strftime("%d/%m/%Y"), "Capital investi": cap, "Actifs Stratégiques": act, "Total Global": epg}
         st.session_state.projections = recalculer_toute_la_base_projections(pd.concat([st.session_state.projections, pd.DataFrame([nl])], ignore_index=True))
         save_sheet("Projections", st.session_state.projections)
         st.rerun()
@@ -576,21 +570,19 @@ elif page_choisie == "🏖️ Suivi":
         config_suivi = {
             "Date": st.column_config.TextColumn("Date ✍️"),
             "Capital investi": st.column_config.NumberColumn("Capital investi ✍️", format="$ %.2f"),
-            "Actifs": st.column_config.NumberColumn("Actifs ✍️", format="$ %.2f"),
-            "Epargne totale": st.column_config.NumberColumn("Epargne totale ✍️", format="$ %.2f"),
+            "Actifs Stratégiques": st.column_config.NumberColumn("Actifs Strat. ✍️", format="$ %.2f"),
+            "Total Global": st.column_config.NumberColumn("Total Global ✍️", format="$ %.2f"),
             "Evolution actifs $": st.column_config.NumberColumn("Evol. Actifs ($) 🔒", format="$ %+.2f", disabled=True),
             "Evolution actifs %": st.column_config.NumberColumn("Evol. Actifs (%) 🔒", format="%+.2f %%", disabled=True),
             "Evolution cumulée $": st.column_config.NumberColumn("Evol. Cumulée ($) 🔒", format="$ %+.2f", disabled=True),
             "Evolution cumulée %": st.column_config.NumberColumn("Evol. Cumulée (%) 🔒", format="%+.2f %%", disabled=True),
-            "Plus-value Épargne $": st.column_config.NumberColumn("PV Épargne ($) 🔒", format="$ %+.2f", disabled=True),
-            "Plus-value Épargne %": st.column_config.NumberColumn("PV Épargne (%) 🔒", format="%+.2f %%", disabled=True),
             "Score TWR %": st.column_config.NumberColumn("Score TWR (%) 🔒", format="%+.2f %%", disabled=True)
         }
         
         edited_suivi = st.data_editor(df_v.sort_values('DT', ascending=False).drop(columns=['DT']), column_config=config_suivi, use_container_width=True, hide_index=True)
         
         if not edited_suivi.equals(df_v.sort_values('DT', ascending=False).drop(columns=['DT'])):
-            st.session_state.projections = recalculer_toute_la_base_projections(edited_suivi[["Date", "Capital investi", "Actifs", "Epargne totale"]])
+            st.session_state.projections = recalculer_toute_la_base_projections(edited_suivi[["Date", "Capital investi", "Actifs Stratégiques", "Total Global"]])
             save_sheet("Projections", st.session_state.projections)
             st.rerun()
 
@@ -616,7 +608,7 @@ elif page_choisie == "📈 Performance":
         df_y = df_y.merge(st.session_state.inflation, on='Année', how='left').fillna({'Inflation (%)': 0.0})
         df_y['Performance nette (%)'] = (((1 + df_y['Performance brute (%)'] / 100) / (1 + df_y['Inflation (%)'] / 100)) - 1) * 100
         df_y['Gains Nets ($)'] = df_y['Evolution cumulée $'] - df_y['Evolution cumulée $'].shift(1).fillna(0)
-        df_y['Valeur Bilan (Or)'] = df_y['Actifs'] / or_px
+        df_y['Valeur Bilan (Or)'] = df_y['Actifs Stratégiques'] / or_px
         
         df_hist = df_y[df_y['Année'] < datetime.datetime.now().year]
         st.subheader("📊 Moyennes Historiques (Hors année en cours)")
@@ -632,7 +624,7 @@ elif page_choisie == "📈 Performance":
         st.divider()
         st.write("Ce tableau récapitule vos résultats par année civile. **Double-cliquez sur la colonne 'Inflation ✍️'** pour y saisir l'inflation manuellement. Le reste est verrouillé (🔒).")
         
-        df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Actifs', 'Valeur Bilan (Or)']].copy()
+        df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Actifs Stratégiques', 'Valeur Bilan (Or)']].copy()
         df_display.columns = ['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Valeur Bilan ($)', 'Valeur Bilan (Or)']
         df_display['Année'] = df_display['Année'].astype(str)
 
