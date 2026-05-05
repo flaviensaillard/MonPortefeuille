@@ -169,16 +169,40 @@ def actualiser_cours_internet(silencieux=False):
         changement = False
         taux_de_change_cache = {} 
         
+        if "variations" not in st.session_state:
+            st.session_state.variations = {}
+            
         for index, row in df_temp.iterrows():
             ticker = str(row.get("Ticker", "")).strip().upper()
             if ticker != "" and ticker != "NAN":
                 try:
                     asset = yf.Ticker(ticker)
+                    
+                    # 1. Récupération du prix actuel
                     try: prix_local = float(asset.fast_info.get('lastPrice', 0.0))
                     except:
                         hist = asset.history(period="1d")
                         prix_local = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
                         
+                    # 2. Récupération de la variation journalière
+                    try:
+                        try: prev_close = float(asset.fast_info.get('previous_close', 0.0))
+                        except: prev_close = 0.0
+                        
+                        if prev_close <= 0.0:
+                            hist = asset.history(period="5d")
+                            if len(hist) >= 2: prev_close = float(hist['Close'].iloc[-2])
+                            
+                        if prev_close > 0.0 and prix_local > 0.0:
+                            var_pct = ((prix_local - prev_close) / prev_close) * 100
+                            symbole = "↗" if var_pct > 0 else ("↘" if var_pct < 0 else "→")
+                            st.session_state.variations[ticker] = f"{symbole} {var_pct:+.2f} %"
+                        else:
+                            st.session_state.variations[ticker] = "→ 0.00 %"
+                    except:
+                        st.session_state.variations[ticker] = "→ 0.00 %"
+                        
+                    # 3. Conversion en USD
                     if prix_local > 0:
                         try: devise = str(asset.fast_info.get('currency', 'USD')).strip().upper()
                         except: devise = "USD"
@@ -216,6 +240,7 @@ def actualiser_cours_internet(silencieux=False):
 
 # --- 5. CHARGEMENT INITIAL (DEPUIS LE CLOUD) ---
 if "apport_dispo" not in st.session_state: st.session_state.apport_dispo = 0.0
+if "variations" not in st.session_state: st.session_state.variations = {}
 
 if "donnees" not in st.session_state:
     st.session_state.donnees = nettoyer_dataframe(load_sheet("Donnees", ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)"]))
@@ -284,8 +309,7 @@ if page_choisie == "📊 Tableau de bord":
     c2.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis MAJ)")
     c2.caption(f"🌍 Soit : **{val_invest / TAUX_EUR_USD:,.2f} €**")
     
-    # CALCUL DE LA RENTE PERPÉTUELLE ACTUELLE
-    inf_estimee = 2.0 / 100.0 # Hypothèse inflation standard
+    inf_estimee = 2.0 / 100.0
     taux_reel = ((1 + 0.08) / (1 + inf_estimee)) - 1
     rente_mensuelle_usd = (val_invest * taux_reel) / 12.0
     
@@ -413,6 +437,11 @@ elif page_choisie == "📋 Liste des actifs":
 
 elif page_choisie == "⚖️ Rééquilibrage":
     st.title("⚖️ Stratégie de Rééquilibrage")
+    
+    if st.button("🔄 Actualiser les cours", use_container_width=True):
+        actualiser_cours_internet(silencieux=False)
+        st.rerun()
+        
     cash_dispo = st.number_input("💵 Nouvel apport à investir ($) ✍️", min_value=0.00, step=100.00, key="apport_dispo")
     st.divider()
     df = st.session_state.donnees
@@ -440,13 +469,17 @@ elif page_choisie == "⚖️ Rééquilibrage":
             if abs(diff) < 1000 and abs(pct_reel - (pct_cib * 100)) < 2.0: action, qte_str = "✅ ÉQUILIBRÉ", f"({signe}{qte_fmt})"
             else: action, qte_str = f"{'🟢 ACHETER' if diff > 0 else '🔴 VENDRE'} $ {abs(diff):,.2f}", f"{signe}{qte_fmt}"
             
-            reeq_list.append({"Ticker 🔒": tick, "Actuel ($) 🔒": val_act, "Écart (%) 🔒": (pct_reel - (pct_cib * 100)), "Action 🔒": action, "Qté (+/-) 🔒": qte_str})
+            var_str = st.session_state.variations.get(tick, "→ 0.00 %")
+            
+            reeq_list.append({"Ticker 🔒": tick, "Var. Jour 🔒": var_str, "Actuel ($) 🔒": val_act, "Écart (%) 🔒": (pct_reel - (pct_cib * 100)), "Action 🔒": action, "Qté (+/-) 🔒": qte_str})
         
         def color_reeq(v):
-            if "ACHETER" in str(v) or "+" in str(v): return 'color: #2ecc71'
-            if "VENDRE" in str(v) or "-" in str(v): return 'color: #e74c3c'
+            v_str = str(v)
+            if "↗" in v_str or "ACHETER" in v_str or "+" in v_str: return 'color: #2ecc71'
+            if "↘" in v_str or "VENDRE" in v_str or "-" in v_str: return 'color: #e74c3c'
             return 'color: #95a5a6'
-        st.dataframe(pd.DataFrame(reeq_list).style.format({"Actuel ($) 🔒": "$ {:,.2f}", "Écart (%) 🔒": "{:+.2f} %"}).map(color_reeq, subset=["Action 🔒", "Qté (+/-) 🔒"]), use_container_width=True, hide_index=True)
+            
+        st.dataframe(pd.DataFrame(reeq_list).style.format({"Actuel ($) 🔒": "$ {:,.2f}", "Écart (%) 🔒": "{:+.2f} %"}).map(color_reeq, subset=["Var. Jour 🔒", "Action 🔒", "Qté (+/-) 🔒"]), use_container_width=True, hide_index=True)
 
 elif page_choisie == "💰 Fonds":
     st.title("💰 Fonds")
