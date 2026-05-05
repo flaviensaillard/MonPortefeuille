@@ -64,6 +64,10 @@ def save_sheet(sheet_name, df):
     ws.clear()
     set_with_dataframe(ws, df, include_index=False)
 
+# --- VARIABLES GLOBALES DE TAUX ---
+try: TAUX_EUR_USD = float(yf.Ticker("EURUSD=X").history(period="1d")['Close'].iloc[-1])
+except: TAUX_EUR_USD = 1.0
+
 # --- 4. FONCTIONS OUTILS ---
 def extraire_nombre(valeur):
     if pd.isna(valeur) or str(valeur).strip() == "" or str(valeur).lower() == "nan": return 0.0
@@ -72,6 +76,31 @@ def extraire_nombre(valeur):
     elif ',' in nettoye: nettoye = nettoye.replace(',', '.')
     try: return float(nettoye)
     except: return 0.0
+
+def afficher_montant_double(label, montant_usd, delta_str="", couleur_valeur=None, taille="large"):
+    montant_eur = montant_usd / TAUX_EUR_USD
+    str_usd = f"{montant_usd:,.2f}".replace(',', ' ')
+    str_eur = f"{montant_eur:,.2f}".replace(',', ' ')
+    
+    delta_html = ""
+    if delta_str:
+        couleur_delta = "#2ecc71" if "+" in delta_str else ("#e74c3c" if "-" in delta_str else "inherit")
+        delta_html = f"<div style='font-size: 0.9rem; font-weight: 600; color: {couleur_delta}; padding-top: 0.2rem;'>{delta_str}</div>"
+        
+    t_val = "1.8rem" if taille == "large" else ("1.4rem" if taille == "medium" else "1.2rem")
+    t_lbl = "0.9rem" if taille == "large" else "0.85rem"
+    c_val = f"color: {couleur_valeur};" if couleur_valeur else ""
+    
+    html = f"""
+    <div style="margin-bottom: 0.8rem;">
+        <div style="font-size: {t_lbl}; opacity: 0.8; margin-bottom: 0.2rem;">{label}</div>
+        <div style="font-size: {t_val}; font-weight: 600; line-height: 1.2; {c_val}">
+            {str_usd} $ <span style="font-size: 0.65em; opacity: 0.7; font-weight: 400;">/ {str_eur} €</span>
+        </div>
+        {delta_html}
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
 
 def est_devise_liquide(ticker):
     ticker_up = str(ticker).upper().strip()
@@ -138,7 +167,6 @@ def recalculer_toute_la_base_projections(df):
             prev = df_travail.iloc[i-1]
             diff_cap = cap - prev["Capital investi"]
             
-            # Pour la stratégie ciblée
             evo_usd = (actifs - prev["Actifs Stratégiques"]) - diff_cap
             row["Evolution actifs $"] = evo_usd
             row["Evolution actifs %"] = (evo_usd / prev["Actifs Stratégiques"] * 100) if prev["Actifs Stratégiques"] != 0 else 0.0
@@ -148,7 +176,6 @@ def recalculer_toute_la_base_projections(df):
             r_twr = evo_usd / base_twr if base_twr != 0 else 0.0
             current_twr_mult *= (1 + r_twr)
             
-            # Pour le total global
             evo_tg_usd = (tg - prev["Total Global"]) - diff_cap
             row["TG_Evolution cumulée $"] = tg - cap
             row["TG_Evolution cumulée %"] = ((tg - cap) / cap * 100) if cap != 0 else 0.0
@@ -264,17 +291,12 @@ if "historique" not in st.session_state:
 if "projections" not in st.session_state:
     st.session_state.projections = recalculer_toute_la_base_projections(load_sheet("Projections", []))
 elif "TG_Evolution cumulée $" not in st.session_state.projections.columns:
-    # FORCE LE RECALCUL SI LA COLONNE CACHÉE MANQUE
     st.session_state.projections = recalculer_toute_la_base_projections(st.session_state.projections)
 
 if "inflation" not in st.session_state:
     df_infl = load_sheet("Inflation", ["Année", "Inflation (%)"])
     if not df_infl.empty and 'Année' in df_infl.columns: df_infl['Année'] = df_infl['Année'].astype(int)
     st.session_state.inflation = df_infl
-
-# --- VARIABLES GLOBALES DE TAUX ---
-try: TAUX_EUR_USD = float(yf.Ticker("EURUSD=X").history(period="1d")['Close'].iloc[-1])
-except: TAUX_EUR_USD = 1.0
 
 # --- GESTION DU CHRONOMÈTRE ---
 if "dernier_refresh_cours" not in st.session_state:
@@ -384,11 +406,10 @@ if page_choisie == "📊 Tableau de bord":
     col_tg_met, col_tg_pie = st.columns([1, 2])
     
     with col_tg_met:
-        st.metric("Total Global", f"$ {val_total:,.2f}", f"{delta_tg:+,.2f} $ ({pct_delta_tg:+.2f} % depuis le dernier pointage)")
+        afficher_montant_double("Total Global", val_total, f"{delta_tg:+,.2f} $ ({pct_delta_tg:+.2f} % depuis le dernier pointage)")
         color_jour_tg = "#2ecc71" if var_jour_total_global_usd >= 0 else "#e74c3c"
         symbole_jour_tg = "📈" if var_jour_total_global_usd >= 0 else "📉"
-        st.markdown(f"<span style='font-size: 1.1em;'>{symbole_jour_tg} Aujourd'hui : <strong style='color:{color_jour_tg}'>{var_jour_total_global_usd:+,.2f} $ ({pct_jour_total_global:+.2f} %)</strong></span>", unsafe_allow_html=True)
-        st.caption(f"Soit : **{val_total / TAUX_EUR_USD:,.2f} €**")
+        st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour_tg} Aujourd'hui : <strong style='color:{color_jour_tg}'>{var_jour_total_global_usd:+,.2f} $ ({pct_jour_total_global:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
         
     with col_tg_pie:
         df_actifs_global = st.session_state.donnees.copy()
@@ -433,14 +454,13 @@ if page_choisie == "📊 Tableau de bord":
             c1_g_tg, c2_g_tg = st.columns([1, 3])
             with c1_g_tg:
                 if "ROI" in mode_graph_tg:
-                    st.metric("Gains nets globaux ($)", f"$ {val_fin_tg:,.2f}", f"{delta_usd_tg:+,.2f} $ ({pct_periode_tg:+.2f} % sur la période)")
-                    st.caption(f"soit en valeur finale : **{val_fin_tg / TAUX_EUR_USD:,.2f} €**")
+                    afficher_montant_double("Gains nets globaux", val_fin_tg, f"{delta_usd_tg:+,.2f} $ ({pct_periode_tg:+.2f} % sur la période)", taille="medium")
                     pct_global_tg = df_viz_tg['TG_Evolution cumulée %'].iloc[-1]
                     color_tg = "green" if pct_global_tg > 0 else "red" if pct_global_tg < 0 else "gray"
                     st.markdown(f"📊 Rentabilité Globale : <strong style='color:{color_tg}'>{pct_global_tg:+.2f} %</strong>", unsafe_allow_html=True)
                 else:
                     st.metric("Score TWR Global (%)", f"{twr_fin_tg:+.2f} %", f"{twr_periode_tg:+.2f} % (sur la période)")
-                    st.markdown(f"💵 Gains nets actuels : **$ {val_fin_tg:,.2f}**")
+                    afficher_montant_double("Gains nets actuels", val_fin_tg, taille="medium")
 
             with c2_g_tg:
                 col_y_tg = 'TG_Evolution cumulée $' if "ROI" in mode_graph_tg else 'TG_Score TWR %'
@@ -458,11 +478,12 @@ if page_choisie == "📊 Tableau de bord":
     # =========================================================
     st.subheader("🎯 3. Actifs Stratégiques (Investissements cibles)")
     
-    st.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
-    color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
-    symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
-    st.markdown(f"<span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span>", unsafe_allow_html=True)
-    st.caption(f"Soit : **{val_invest / TAUX_EUR_USD:,.2f} €**")
+    col_strat_met, col_strat_vide = st.columns(2)
+    with col_strat_met:
+        afficher_montant_double("Actifs Stratégiques", val_invest, f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
+        color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
+        symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
+        st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
     
     st.write("") 
     
@@ -502,13 +523,12 @@ if page_choisie == "📊 Tableau de bord":
             c1_g, c2_g = st.columns([1, 3])
             with c1_g:
                 if "ROI" in mode_graph:
-                    st.metric("Gains nets de la stratégie ($)", f"$ {val_fin:,.2f}", f"{delta_usd:+,.2f} $ ({pct_periode:+.2f} % sur la période)")
-                    st.caption(f"soit en valeur finale : **{val_fin / TAUX_EUR_USD:,.2f} €**")
+                    afficher_montant_double("Gains nets de la stratégie", val_fin, f"{delta_usd:+,.2f} $ ({pct_periode:+.2f} % sur la période)", taille="medium")
                     color = "green" if pct_global > 0 else "red" if pct_global < 0 else "gray"
                     st.markdown(f"📊 Rentabilité Stratégique : <strong style='color:{color}'>{pct_global:+.2f} %</strong>", unsafe_allow_html=True)
                 else:
                     st.metric("Score TWR Stratégique (%)", f"{twr_fin:+.2f} %", f"{twr_periode:+.2f} % (sur la période)")
-                    st.markdown(f"💵 Gains nets actuels : **$ {val_fin:,.2f}**")
+                    afficher_montant_double("Gains nets actuels", val_fin, taille="medium")
                     
             with c2_g:
                 col_y = 'Evolution cumulée $' if "ROI" in mode_graph else 'Score TWR %'
@@ -561,8 +581,7 @@ if page_choisie == "📊 Tableau de bord":
         taux_reel = ((1 + 0.08) / (1 + (inf_estimee_dash / 100.0))) - 1
         rente_mensuelle_usd = (val_invest * max(0.0, taux_reel)) / 12.0
         
-        st.metric("Rente Mensuelle Nette (Base 8% par an)", f"$ {rente_mensuelle_usd:,.2f}")
-        st.caption(f"Pouvoir d'achat garanti : **{rente_mensuelle_usd / TAUX_EUR_USD:,.2f} € / mois**")
+        afficher_montant_double("Rente Mensuelle Nette (Base 8% par an)", rente_mensuelle_usd, couleur_valeur="#3498db")
 
 
 elif page_choisie == "📋 Liste des actifs":
@@ -574,10 +593,11 @@ elif page_choisie == "📋 Liste des actifs":
     somme_p = sum(extraire_nombre(r["Pourcentage (%)"]) for _, r in df_actuel.iterrows())
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}".replace(',',' '))
-    c1.caption(f"soit {val_invest / TAUX_EUR_USD:,.2f} €")
-    c2.metric("Total Global", f"$ {val_total:,.2f}".replace(',',' '))
-    c2.caption(f"soit {val_total / TAUX_EUR_USD:,.2f} €")
+    with c1:
+        afficher_montant_double("Actifs Stratégiques", val_invest)
+    with c2:
+        afficher_montant_double("Total Global", val_total)
+    
     c3.metric("Répartition Cible", f"{round(somme_p, 2):.2f}%", f"{round(100 - somme_p, 2):.2f}% restant", delta_color="inverse" if somme_p > 100 else "normal")
 
     st.divider()
@@ -687,7 +707,7 @@ elif page_choisie == "💰 Fonds":
                 st.rerun()
     
     apports = sum(row["Montant $"] if "ajout" in row["Type"].lower() else -row["Montant $"] for _, row in df_h.iterrows())
-    st.metric("Total Apports nets ($)", f"$ {apports:,.2f}")
+    afficher_montant_double("Total Apports nets", apports)
     
     if not df_h.empty:
         df_h_v = df_h.copy()
@@ -766,7 +786,8 @@ elif page_choisie == "📈 Performance":
             c_m1.metric("Moyenne Perf. Brute", f"{df_hist['Performance brute (%)'].mean():+.2f} %")
             c_m2.metric("Moyenne Inflation", f"{df_hist['Inflation (%)'].mean():.2f} %")
             c_m3.metric("Moyenne Perf. Nette", f"{df_hist['Performance nette (%)'].mean():+.2f} %")
-            c_m4.metric("Moyenne Gains / An", f"$ {df_hist['Gains Nets ($)'].mean():+,.2f}")
+            with c_m4:
+                afficher_montant_double("Moyenne Gains / An", df_hist['Gains Nets ($)'].mean(), taille="medium")
         else: st.info("L'historique est insuffisant.")
         
         st.divider()
@@ -872,29 +893,19 @@ elif page_choisie == "🌴 Retraite":
     
     with colA:
         st.markdown(f"### Scénario A (Moyenne : {rendement_a:.2f} % / an)")
-        st.metric("💰 Valeur Brute du Magot 🔒", f"$ {cap_a_nom:,.2f}")
-        st.caption(f"soit **{cap_a_nom / TAUX_EUR_USD:,.2f} €**")
+        afficher_montant_double("💰 Valeur Brute du Magot 🔒", cap_a_nom)
+        afficher_montant_double("🛒 Valeur Nette (Pouvoir d'achat) 🔒", cap_a_real)
         st.write("")
-        st.metric("🛒 Valeur Nette (Pouvoir d'achat) 🔒", f"$ {cap_a_real:,.2f}")
-        st.caption(f"soit **{cap_a_real / TAUX_EUR_USD:,.2f} €**")
-        st.write("")
-        st.markdown(f"<h4 style='color: #2ecc71; margin-bottom: 0px;'>Rente Mensuelle Nette : $ {rente_a_reelle:,.2f}</h4>", unsafe_allow_html=True)
-        st.caption(f"soit **{rente_a_reelle / TAUX_EUR_USD:,.2f} €** (Avant impôts).", unsafe_allow_html=True)
-        st.markdown(f"<h5 style='color: #e67e22; margin-top: 10px; margin-bottom: 0px;'>Après Impôts ({taxe_plus_value:.1f}%) : $ {rente_a_reelle * (1 - taxe_plus_value / 100.0):,.2f}</h5>", unsafe_allow_html=True)
-        st.caption(f"soit **{rente_a_reelle * (1 - taxe_plus_value / 100.0) / TAUX_EUR_USD:,.2f} €** nets dans votre poche.", unsafe_allow_html=True)
+        afficher_montant_double("Rente Mensuelle Nette (Avant impôts)", rente_a_reelle, couleur_valeur="#2ecc71")
+        afficher_montant_double(f"Après Impôts ({taxe_plus_value:.1f}%)", rente_a_reelle * (1 - taxe_plus_value / 100.0), couleur_valeur="#e67e22", taille="medium")
 
     with colB:
         st.markdown(f"### Scénario B (Fixe : {rendement_b:.2f} % / an)")
-        st.metric("💰 Valeur Brute du Magot 🔒", f"$ {cap_b_nom:,.2f}")
-        st.caption(f"soit **{cap_b_nom / TAUX_EUR_USD:,.2f} €**")
+        afficher_montant_double("💰 Valeur Brute du Magot 🔒", cap_b_nom)
+        afficher_montant_double("🛒 Valeur Nette (Pouvoir d'achat) 🔒", cap_b_real)
         st.write("")
-        st.metric("🛒 Valeur Nette (Pouvoir d'achat) 🔒", f"$ {cap_b_real:,.2f}")
-        st.caption(f"soit **{cap_b_real / TAUX_EUR_USD:,.2f} €**")
-        st.write("")
-        st.markdown(f"<h4 style='color: #3498db; margin-bottom: 0px;'>Rente Mensuelle Nette : $ {rente_b_reelle:,.2f}</h4>", unsafe_allow_html=True)
-        st.caption(f"soit **{rente_b_reelle / TAUX_EUR_USD:,.2f} €** (Avant impôts).", unsafe_allow_html=True)
-        st.markdown(f"<h5 style='color: #e67e22; margin-top: 10px; margin-bottom: 0px;'>Après Impôts ({taxe_plus_value:.1f}%) : $ {rente_b_reelle * (1 - taxe_plus_value / 100.0):,.2f}</h5>", unsafe_allow_html=True)
-        st.caption(f"soit **{rente_b_reelle * (1 - taxe_plus_value / 100.0) / TAUX_EUR_USD:,.2f} €** nets dans votre poche.", unsafe_allow_html=True)
+        afficher_montant_double("Rente Mensuelle Nette (Avant impôts)", rente_b_reelle, couleur_valeur="#3498db")
+        afficher_montant_double(f"Après Impôts ({taxe_plus_value:.1f}%)", rente_b_reelle * (1 - taxe_plus_value / 100.0), couleur_valeur="#e67e22", taille="medium")
 
     st.divider()
     st.subheader("📈 Évolution du Pouvoir d'Achat Réel (Capital Net)")
