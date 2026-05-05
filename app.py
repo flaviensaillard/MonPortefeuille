@@ -328,6 +328,18 @@ if page_choisie == "📊 Tableau de bord":
     val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
     val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
     
+    # Création du "Point en direct" pour étendre les courbes des graphiques
+    cap_actuel = sum(row["Montant $"] if "ajout" in row["Type"].lower() else -row["Montant $"] for _, row in st.session_state.historique.iterrows())
+    df_p_live = df_p.copy()
+    ligne_live = pd.DataFrame([{
+        "Date": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+        "Capital investi": cap_actuel,
+        "Actifs Stratégiques": val_invest,
+        "Total Global": val_total
+    }])
+    df_p_live = pd.concat([df_p_live, ligne_live], ignore_index=True)
+    df_p_live = recalculer_toute_la_base_projections(df_p_live)
+    
     def parse_var_jour(ticker):
         var_str = st.session_state.variations.get(ticker, "0")
         match = re.search(r'([+-]?\d+\.?\d*)', var_str)
@@ -403,15 +415,18 @@ if page_choisie == "📊 Tableau de bord":
     # =========================================================
     st.subheader("🌍 2. Total Global (Toutes liquidités incluses)")
     
-    afficher_montant_double("Total Global", val_total, f"{delta_tg:+,.2f} $ ({pct_delta_tg:+.2f} % depuis le dernier pointage)")
-    color_jour_tg = "#2ecc71" if var_jour_total_global_usd >= 0 else "#e74c3c"
-    symbole_jour_tg = "📈" if var_jour_total_global_usd >= 0 else "📉"
-    st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour_tg} Aujourd'hui : <strong style='color:{color_jour_tg}'>{var_jour_total_global_usd:+,.2f} $ ({pct_jour_total_global:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
+    col_tg_met, col_tg_vide = st.columns(2)
     
+    with col_tg_met:
+        afficher_montant_double("Total Global", val_total, f"{delta_tg:+,.2f} $ ({pct_delta_tg:+.2f} % depuis le dernier pointage)")
+        color_jour_tg = "#2ecc71" if var_jour_total_global_usd >= 0 else "#e74c3c"
+        symbole_jour_tg = "📈" if var_jour_total_global_usd >= 0 else "📉"
+        st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour_tg} Aujourd'hui : <strong style='color:{color_jour_tg}'>{var_jour_total_global_usd:+,.2f} $ ({pct_jour_total_global:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
+        
     st.write("")
 
     if not df_p.empty:
-        df_viz_tg = df_p.copy()
+        df_viz_tg = df_p_live.copy()
         df_viz_tg['Date_DT'] = pd.to_datetime(df_viz_tg['Date'], dayfirst=True, errors='coerce')
         df_viz_tg = df_viz_tg.dropna(subset=['Date_DT']).sort_values('Date_DT').reset_index(drop=True)
 
@@ -485,17 +500,19 @@ if page_choisie == "📊 Tableau de bord":
     # =========================================================
     st.subheader("🎯 3. Actifs Stratégiques (Investissements cibles)")
     
-    afficher_montant_double("Actifs Stratégiques", val_invest, f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
-    color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
-    symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
-    st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
+    col_strat_met, col_strat_vide = st.columns(2)
+    with col_strat_met:
+        afficher_montant_double("Actifs Stratégiques", val_invest, f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
+        color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
+        symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
+        st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
     
     st.write("") 
     
     if df_p.empty: 
         st.info("Aucune donnée disponible pour l'analyse. Figez d'abord une situation dans l'onglet '🏖️ Suivi'.")
     else:
-        df_viz = df_p.copy()
+        df_viz = df_p_live.copy()
         df_viz['Date_DT'] = pd.to_datetime(df_viz['Date'], dayfirst=True, errors='coerce')
         df_viz = df_viz.dropna(subset=['Date_DT']).sort_values('Date_DT').reset_index(drop=True)
         
