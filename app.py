@@ -263,6 +263,9 @@ if "historique" not in st.session_state:
 
 if "projections" not in st.session_state:
     st.session_state.projections = recalculer_toute_la_base_projections(load_sheet("Projections", []))
+elif "TG_Evolution cumulée $" not in st.session_state.projections.columns:
+    # FORCE LE RECALCUL SI LA COLONNE CACHÉE MANQUE
+    st.session_state.projections = recalculer_toute_la_base_projections(st.session_state.projections)
 
 if "inflation" not in st.session_state:
     df_infl = load_sheet("Inflation", ["Année", "Inflation (%)"])
@@ -588,18 +591,24 @@ elif page_choisie == "📋 Liste des actifs":
     config_actifs = {
         "Ticker": st.column_config.TextColumn("Ticker ✍️"),
         "Type": st.column_config.SelectboxColumn("Type ✍️", options=["🛢️ Action", "📜 Obligation", "💰 Or-BTC", "💵 Cash"]),
-        "Quantité": st.column_config.TextColumn("Quantité ✍️"),
-        "Pourcentage (%)": st.column_config.NumberColumn("Pourcentage (%) ✍️", format="%.2f%%"),
         "Court": st.column_config.TextColumn("Court 🔒", disabled=True),
+        "Quantité": st.column_config.TextColumn("Quantité ✍️"),
         "Valeur totale": st.column_config.TextColumn("Valeur totale 🔒", disabled=True),
+        "Pourcentage (%)": st.column_config.NumberColumn("Pourcentage (%) ✍️", format="%.2f%%"),
         "Var. Jour 🔒": st.column_config.TextColumn("Var. Jour 🔒", disabled=True)
     }
     
-    display_cols = ["Ticker", "Var. Jour 🔒", "Type", "Quantité", "Pourcentage (%)", "Court", "Valeur totale"]
+    display_cols = ["Ticker", "Type", "Court", "Quantité", "Valeur totale", "Pourcentage (%)", "Var. Jour 🔒"]
+    
+    def color_var(v):
+        v_str = str(v)
+        if "↗" in v_str or "+" in v_str: return 'color: #2ecc71'
+        if "↘" in v_str or "-" in v_str: return 'color: #e74c3c'
+        return 'color: #95a5a6'
     
     m_dev = df_actuel.apply(lambda row: est_devise_liquide(row.get("Ticker", "")), axis=1)
-    res_i = st.data_editor(df_actuel[~m_dev][display_cols], key="ei", column_config=config_actifs, use_container_width=True, hide_index=True, num_rows="dynamic")
-    res_d = st.data_editor(df_actuel[m_dev][display_cols], key="ed", column_config=config_actifs, use_container_width=True, hide_index=True, num_rows="dynamic")
+    res_i = st.data_editor(df_actuel[~m_dev][display_cols].style.map(color_var, subset=["Var. Jour 🔒"]), key="ei", column_config=config_actifs, use_container_width=True, hide_index=True, num_rows="dynamic")
+    res_d = st.data_editor(df_actuel[m_dev][display_cols].style.map(color_var, subset=["Var. Jour 🔒"]), key="ed", column_config=config_actifs, use_container_width=True, hide_index=True, num_rows="dynamic")
 
     new_df = pd.concat([res_i, res_d], ignore_index=True)
     core_cols = ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)"]
