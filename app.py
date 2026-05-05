@@ -178,13 +178,11 @@ def actualiser_cours_internet(silencieux=False):
                 try:
                     asset = yf.Ticker(ticker)
                     
-                    # 1. Récupération du prix actuel
                     try: prix_local = float(asset.fast_info.get('lastPrice', 0.0))
                     except:
                         hist = asset.history(period="1d")
                         prix_local = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
                         
-                    # 2. Récupération de la variation journalière
                     try:
                         try: prev_close = float(asset.fast_info.get('previous_close', 0.0))
                         except: prev_close = 0.0
@@ -202,7 +200,6 @@ def actualiser_cours_internet(silencieux=False):
                     except:
                         st.session_state.variations[ticker] = "→ 0.00 %"
                         
-                    # 3. Conversion en USD
                     if prix_local > 0:
                         try: devise = str(asset.fast_info.get('currency', 'USD')).strip().upper()
                         except: devise = "USD"
@@ -296,6 +293,25 @@ if page_choisie == "📊 Tableau de bord":
     val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
     val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
     
+    # CALCUL DE LA PROGRESSION DU JOUR
+    def parse_var_jour(ticker):
+        var_str = st.session_state.variations.get(ticker, "0")
+        match = re.search(r'([+-]?\d+\.?\d*)', var_str)
+        return float(match.group(1)) if match else 0.0
+
+    var_jour_total_usd = 0.0
+    val_invest_veille = 0.0
+    for _, r in df_actuel.iterrows():
+        if extraire_nombre(r["Pourcentage (%)"]) > 0:
+            tick = str(r.get("Ticker", "")).strip().upper()
+            v_actuelle = extraire_nombre(r["Valeur totale"])
+            v_pct = parse_var_jour(tick)
+            v_veille = v_actuelle / (1 + v_pct / 100) if (1 + v_pct / 100) != 0 else v_actuelle
+            var_jour_total_usd += (v_actuelle - v_veille)
+            val_invest_veille += v_veille
+            
+    pct_jour_total = (var_jour_total_usd / val_invest_veille * 100) if val_invest_veille > 0 else 0.0
+    
     delta = pct_delta = 0.0
     if not df_p.empty:
         derniere_val = extraire_nombre(df_p.iloc[-1]["Actifs"])
@@ -307,7 +323,10 @@ if page_choisie == "📊 Tableau de bord":
     c1.caption(f"🌍 Soit : **{val_total / TAUX_EUR_USD:,.2f} €**")
     
     c2.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis MAJ)")
-    c2.caption(f"🌍 Soit : **{val_invest / TAUX_EUR_USD:,.2f} €**")
+    
+    color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
+    symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
+    c2.markdown(f"<span style='font-size: 0.9em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span>", unsafe_allow_html=True)
     
     inf_estimee = 2.0 / 100.0
     taux_reel = ((1 + 0.08) / (1 + inf_estimee)) - 1
@@ -466,8 +485,11 @@ elif page_choisie == "⚖️ Rééquilibrage":
             qte_fmt = f"{abs(round(qte, 6)):.6f}" if "BTC" in tick else f"{abs(int(round(qte)))}"
             signe = "+ " if qte > 0.000001 else "- " if qte < -0.000001 else ""
             
-            if abs(diff) < 1000 and abs(pct_reel - (pct_cib * 100)) < 2.0: action, qte_str = "✅ ÉQUILIBRÉ", f"({signe}{qte_fmt})"
-            else: action, qte_str = f"{'🟢 ACHETER' if diff > 0 else '🔴 VENDRE'} $ {abs(diff):,.2f}", f"{signe}{qte_fmt}"
+            # CORRECTION DE LA LOGIQUE : OU au lieu de ET
+            if abs(diff) < 1000 or abs(pct_reel - (pct_cib * 100)) < 2.0: 
+                action, qte_str = "✅ ÉQUILIBRÉ", f"({signe}{qte_fmt})"
+            else: 
+                action, qte_str = f"{'🟢 ACHETER' if diff > 0 else '🔴 VENDRE'} $ {abs(diff):,.2f}", f"{signe}{qte_fmt}"
             
             var_str = st.session_state.variations.get(tick, "→ 0.00 %")
             
