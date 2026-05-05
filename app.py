@@ -369,9 +369,9 @@ if page_choisie == "📊 Tableau de bord":
         st.caption(f"Soit : **{val_total / TAUX_EUR_USD:,.2f} €**")
         
     with col_tg_pie:
-        df_actifs = st.session_state.donnees.copy()
-        df_actifs['Val_Num'] = df_actifs['Valeur totale'].apply(extraire_nombre)
-        df_pie_tg = df_actifs[df_actifs['Val_Num'] > 0].groupby('Type')['Val_Num'].sum().reset_index()
+        df_actifs_global = st.session_state.donnees.copy()
+        df_actifs_global['Val_Num'] = df_actifs_global['Valeur totale'].apply(extraire_nombre)
+        df_pie_tg = df_actifs_global[df_actifs_global['Val_Num'] > 0].groupby('Type')['Val_Num'].sum().reset_index()
         if not df_pie_tg.empty:
             fig_tg = px.pie(df_pie_tg, values='Val_Num', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or-BTC": "#f1c40f", "💵 Cash": "#2ecc71"}, hole=0.4)
             fig_tg.update_traces(textposition='inside', textinfo='percent+label')
@@ -385,14 +385,15 @@ if page_choisie == "📊 Tableau de bord":
     # =========================================================
     st.subheader("🎯 3. Actifs Stratégiques (Investissements cibles)")
     
-    # Métrique principale de la stratégie
-    st.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
-    color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
-    symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
-    st.markdown(f"<span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span>", unsafe_allow_html=True)
-    st.caption(f"Soit : **{val_invest / TAUX_EUR_USD:,.2f} €**")
+    col_strat_met, col_strat_vide = st.columns(2)
+    with col_strat_met:
+        st.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
+        color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
+        symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
+        st.markdown(f"<span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span>", unsafe_allow_html=True)
+        st.caption(f"Soit : **{val_invest / TAUX_EUR_USD:,.2f} €**")
     
-    st.write("") # Espace
+    st.write("") 
     
     if df_p.empty: 
         st.info("Aucune donnée disponible pour l'analyse. Figez d'abord une situation dans l'onglet '🏖️ Suivi'.")
@@ -447,10 +448,15 @@ if page_choisie == "📊 Tableau de bord":
                 fig_line.update_yaxes(zeroline=False, rangemode="normal")
                 st.plotly_chart(fig_line, use_container_width=True)
 
-    st.write("") # Espace
+    st.write("")
     st.markdown("**🎯 Répartition détaillée de la stratégie**")
     
-    df_strat = df_actifs[df_actifs['Pct_Cible'] > 0]
+    # CALCUL SÉCURISÉ POUR LES CAMEMBERTS DE STRATÉGIE
+    df_actifs_dash = st.session_state.donnees.copy()
+    df_actifs_dash['Val_Num'] = df_actifs_dash['Valeur totale'].apply(extraire_nombre)
+    df_actifs_dash['Pct_Cible'] = df_actifs_dash['Pourcentage (%)'].apply(extraire_nombre)
+    df_strat = df_actifs_dash[df_actifs_dash['Pct_Cible'] > 0]
+    
     c_p1, c_p2 = st.columns(2)
     with c_p1:
         st.markdown("*Classes d'actifs ciblées*")
@@ -478,13 +484,14 @@ if page_choisie == "📊 Tableau de bord":
     c_rente1, c_rente2 = st.columns(2)
     
     with c_rente1:
-        inf_estimee_dash = st.slider("Inflation cible (%) ✍️", min_value=0.0, max_value=15.0, value=2.0, step=0.1, key="dash_infl", help="L'inflation est déduite pour garantir la croissance de votre capital et préserver votre pouvoir d'achat futur.")
+        st.write("") # Espace pour l'alignement
+        inf_estimee_dash = st.slider("Inflation cible à déduire (%) ✍️", min_value=0.0, max_value=15.0, value=2.0, step=0.1, key="dash_infl", help="L'inflation est déduite pour garantir la croissance de votre capital et préserver votre pouvoir d'achat futur.")
         
     with c_rente2:
         taux_reel = ((1 + 0.08) / (1 + (inf_estimee_dash / 100.0))) - 1
         rente_mensuelle_usd = (val_invest * max(0.0, taux_reel)) / 12.0
         
-        st.metric("Rente Mensuelle Nette (8%)", f"$ {rente_mensuelle_usd:,.2f}")
+        st.metric("Rente Mensuelle Nette (Base 8% par an)", f"$ {rente_mensuelle_usd:,.2f}")
         st.caption(f"Pouvoir d'achat garanti : **{rente_mensuelle_usd / TAUX_EUR_USD:,.2f} € / mois**")
 
 
