@@ -278,10 +278,7 @@ if st.sidebar.button("🔄 Recharger l'application", use_container_width=True):
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
     
-    if st.button("🔄 Actualiser les cours", use_container_width=True):
-        actualiser_cours_internet(silencieux=False)
-        st.rerun()
-        
+    # --- PRÉ-CALCULS DES DONNÉES ---
     df_actuel = st.session_state.donnees
     df_p = st.session_state.projections
     
@@ -305,11 +302,9 @@ if page_choisie == "📊 Tableau de bord":
         v_pct = parse_var_jour(tick)
         v_veille = v_actuelle / (1 + v_pct / 100) if (1 + v_pct / 100) != 0 else v_actuelle
         
-        # Variation pour le Total Global
         var_jour_total_global_usd += (v_actuelle - v_veille)
         val_total_veille += v_veille
         
-        # Variation pour les Actifs Stratégiques
         if extraire_nombre(r["Pourcentage (%)"]) > 0:
             var_jour_total_usd += (v_actuelle - v_veille)
             val_invest_veille += v_veille
@@ -329,72 +324,94 @@ if page_choisie == "📊 Tableau de bord":
         delta_tg = val_total - derniere_val_tg
         if derniere_val_tg > 0: pct_delta_tg = (delta_tg / derniere_val_tg) * 100
 
-    c1, c2, c3, c4 = st.columns(4)
-    
-    # --- METRIC TOTAL GLOBAL ---
-    c1.metric("Total Global", f"$ {val_total:,.2f}", f"{delta_tg:+,.2f} $ ({pct_delta_tg:+.2f} % depuis le dernier pointage)")
-    color_jour_tg = "#2ecc71" if var_jour_total_global_usd >= 0 else "#e74c3c"
-    symbole_jour_tg = "📈" if var_jour_total_global_usd >= 0 else "📉"
-    c1.markdown(f"<span style='font-size: 0.9em;'>{symbole_jour_tg} Aujourd'hui : <strong style='color:{color_jour_tg}'>{var_jour_total_global_usd:+,.2f} $ ({pct_jour_total_global:+.2f} %)</strong></span>", unsafe_allow_html=True)
-    c1.caption(f"🌍 Soit : **{val_total / TAUX_EUR_USD:,.2f} €**")
-    
-    # --- METRIC ACTIFS STRATÉGIQUES ---
-    c2.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
-    color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
-    symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
-    c2.markdown(f"<span style='font-size: 0.9em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span>", unsafe_allow_html=True)
-    c2.caption(f"🌍 Soit : **{val_invest / TAUX_EUR_USD:,.2f} €**")
-    
-    with c4:
-        inf_estimee_dash = st.slider("Inflation cible (%) ✍️", min_value=0.0, max_value=15.0, value=2.0, step=0.1, key="dash_infl")
-        
-    taux_reel = ((1 + 0.08) / (1 + (inf_estimee_dash / 100.0))) - 1
-    rente_mensuelle_usd = (val_invest * max(0.0, taux_reel)) / 12.0
-    
-    # --- METRIC RENTE MENSUELLE ---
-    c3.metric("Rente Mensuelle (8%)", f"$ {rente_mensuelle_usd:,.2f}")
-    c3.caption(f"🏖️ Pouvoir d'achat : **{rente_mensuelle_usd / TAUX_EUR_USD:,.2f} € / mois**")
-    
-    st.divider()
-
     besoin_reequilibrage = False
     if val_invest > 0:
         for _, row in df_actuel.iterrows():
             pct_cib = extraire_nombre(row["Pourcentage (%)"]) / 100
             if pct_cib == 0: continue
-            
             val_act = extraire_nombre(row["Valeur totale"])
             diff = (val_invest * pct_cib) - val_act
             pct_reel = (val_act / val_invest) * 100
-            
             if abs(diff) >= 1000 and abs(pct_reel - (pct_cib * 100)) >= 2.0:
                 besoin_reequilibrage = True
                 break
 
-    if besoin_reequilibrage:
-        st.warning("⚠️ **Rééquilibrage nécessaire** (Certains de vos actifs ont dépassé les tolérances. Consultez l'onglet Rééquilibrage.)")
-    else:
-        st.success("✅ **Équilibré** (Votre stratégie d'allocation cible est actuellement respectée.)")
+    # =========================================================
+    # BLOC 1 : PILOTAGE & STATUT
+    # =========================================================
+    st.subheader("⚙️ 1. Pilotage & Statut")
+    col_btn, col_statut = st.columns([1, 2])
+    
+    with col_btn:
+        if st.button("🔄 Actualiser les cours", use_container_width=True):
+            actualiser_cours_internet(silencieux=False)
+            st.rerun()
+            
+    with col_statut:
+        if besoin_reequilibrage:
+            st.warning("⚠️ **Rééquilibrage nécessaire** (Certains de vos actifs ont dépassé les tolérances. Consultez l'onglet Rééquilibrage.)")
+        else:
+            st.success("✅ **Équilibré** (Votre stratégie d'allocation cible est actuellement respectée.)")
+            
+    st.divider()
+
+    # =========================================================
+    # BLOC 2 : TOTAL GLOBAL
+    # =========================================================
+    st.subheader("🌍 2. Total Global (Toutes liquidités incluses)")
+    col_tg_met, col_tg_pie = st.columns(2)
+    
+    with col_tg_met:
+        st.metric("Total Global", f"$ {val_total:,.2f}", f"{delta_tg:+,.2f} $ ({pct_delta_tg:+.2f} % depuis le dernier pointage)")
+        color_jour_tg = "#2ecc71" if var_jour_total_global_usd >= 0 else "#e74c3c"
+        symbole_jour_tg = "📈" if var_jour_total_global_usd >= 0 else "📉"
+        st.markdown(f"<span style='font-size: 1.1em;'>{symbole_jour_tg} Aujourd'hui : <strong style='color:{color_jour_tg}'>{var_jour_total_global_usd:+,.2f} $ ({pct_jour_total_global:+.2f} %)</strong></span>", unsafe_allow_html=True)
+        st.caption(f"Soit : **{val_total / TAUX_EUR_USD:,.2f} €**")
+        
+    with col_tg_pie:
+        df_actifs = st.session_state.donnees.copy()
+        df_actifs['Val_Num'] = df_actifs['Valeur totale'].apply(extraire_nombre)
+        df_pie_tg = df_actifs[df_actifs['Val_Num'] > 0].groupby('Type')['Val_Num'].sum().reset_index()
+        if not df_pie_tg.empty:
+            fig_tg = px.pie(df_pie_tg, values='Val_Num', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or-BTC": "#f1c40f", "💵 Cash": "#2ecc71"}, hole=0.4)
+            fig_tg.update_traces(textposition='inside', textinfo='percent+label')
+            fig_tg.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), title="Toutes Classes d'actifs confondues", title_x=0.5)
+            st.plotly_chart(fig_tg, use_container_width=True)
 
     st.divider()
+
+    # =========================================================
+    # BLOC 3 : ACTIFS STRATÉGIQUES
+    # =========================================================
+    st.subheader("🎯 3. Actifs Stratégiques (Investissements cibles)")
     
-    if df_p.empty: st.info("Aucune donnée disponible. Figez d'abord une situation dans l'onglet '🏖️ Suivi'.")
+    # Métrique principale de la stratégie
+    st.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
+    color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
+    symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
+    st.markdown(f"<span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span>", unsafe_allow_html=True)
+    st.caption(f"Soit : **{val_invest / TAUX_EUR_USD:,.2f} €**")
+    
+    st.write("") # Espace
+    
+    if df_p.empty: 
+        st.info("Aucune donnée disponible pour l'analyse. Figez d'abord une situation dans l'onglet '🏖️ Suivi'.")
     else:
         df_viz = df_p.copy()
         df_viz['Date_DT'] = pd.to_datetime(df_viz['Date'], dayfirst=True, errors='coerce')
         df_viz = df_viz.dropna(subset=['Date_DT']).sort_values('Date_DT').reset_index(drop=True)
         
+        st.markdown("**📈 Évolution & Performance de la stratégie**")
         c_f1, c_f2 = st.columns(2)
         with c_f1: filtre = st.radio("Sélectionnez la période :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année"], horizontal=True)
         with c_f2: mode_graph = st.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=True)
             
-        st.divider()
         now = pd.Timestamp.now()
         
         if filtre == "Depuis 1 an": df_viz = df_viz[df_viz['Date_DT'] >= (now - pd.DateOffset(years=1))]
         elif filtre == "Depuis le début de l'année": df_viz = df_viz[df_viz['Date_DT'] >= pd.Timestamp(year=now.year - 1, month=12, day=31)]
                 
-        if df_viz.empty: st.warning(f"Aucun enregistrement trouvé.")
+        if df_viz.empty: st.warning(f"Aucun enregistrement trouvé pour cette période.")
         else:
             df_viz.set_index('Date_DT', inplace=True)
             val_debut = df_viz['Evolution cumulée $'].iloc[0]
@@ -410,9 +427,7 @@ if page_choisie == "📊 Tableau de bord":
             mult_d, mult_f = 1 + (twr_debut / 100), 1 + (twr_fin / 100)
             twr_periode = ((mult_f / mult_d) - 1) * 100 if mult_d != 0 else 0.0
             
-            st.subheader(f"📈 Analyse de la Performance")
             c1_g, c2_g = st.columns([1, 3])
-            
             with c1_g:
                 if "ROI" in mode_graph:
                     st.metric("Gains nets totaux ($)", f"$ {val_fin:,.2f}", f"{delta_usd:+,.2f} $ ({pct_periode:+.2f} % sur la période)")
@@ -431,58 +446,47 @@ if page_choisie == "📊 Tableau de bord":
                 fig_line.update_layout(xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0))
                 fig_line.update_yaxes(zeroline=False, rangemode="normal")
                 st.plotly_chart(fig_line, use_container_width=True)
-            
-            st.divider()
-            
-            # --- SECTION CAMEMBERTS STRATÉGIQUES ---
-            st.subheader("🎯 Répartition de la Stratégie (Actifs Stratégiques)")
-            
-            df_actifs = st.session_state.donnees.copy()
-            df_actifs['Val_Num'] = df_actifs['Valeur totale'].apply(extraire_nombre)
-            df_actifs['Pct_Cible'] = df_actifs['Pourcentage (%)'].apply(extraire_nombre)
-            
-            df_strat = df_actifs[df_actifs['Pct_Cible'] > 0]
-            
-            c_p1, c_p2 = st.columns(2)
-            with c_p1:
-                st.markdown("**Classes d'actifs ciblées**")
-                df_pie1 = df_strat[df_strat['Val_Num'] > 0].groupby('Type')['Val_Num'].sum().reset_index()
-                if not df_pie1.empty:
-                    fig1 = px.pie(df_pie1, values='Val_Num', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or-BTC": "#f1c40f", "💵 Cash": "#2ecc71"}, hole=0.4)
-                    fig1.update_traces(textposition='inside', textinfo='percent+label')
-                    fig1.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10))
-                    st.plotly_chart(fig1, use_container_width=True)
 
-            with c_p2:
-                st.markdown("**Détail des lignes stratégiques**")
-                if not df_strat.empty:
-                    fig2 = px.pie(df_strat[df_strat['Val_Num'] > 0], values='Val_Num', names='Ticker', hole=0.4)
-                    fig2.update_traces(textposition='inside', textinfo='percent+label')
-                    fig2.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10))
-                    st.plotly_chart(fig2, use_container_width=True)
-                    
-            st.divider()
-            
-            # --- SECTION CAMEMBERTS TOTAL GLOBAL ---
-            st.subheader("🌍 Répartition du Patrimoine (Total Global)")
-            
-            c_tg1, c_tg2 = st.columns(2)
-            with c_tg1:
-                st.markdown("**Toutes classes d'actifs confondues**")
-                df_pie_tg = df_actifs[df_actifs['Val_Num'] > 0].groupby('Type')['Val_Num'].sum().reset_index()
-                if not df_pie_tg.empty:
-                    fig_tg = px.pie(df_pie_tg, values='Val_Num', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or-BTC": "#f1c40f", "💵 Cash": "#2ecc71"}, hole=0.4)
-                    fig_tg.update_traces(textposition='inside', textinfo='percent+label')
-                    fig_tg.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10))
-                    st.plotly_chart(fig_tg, use_container_width=True)
+    st.write("") # Espace
+    st.markdown("**🎯 Répartition détaillée de la stratégie**")
+    
+    df_strat = df_actifs[df_actifs['Pct_Cible'] > 0]
+    c_p1, c_p2 = st.columns(2)
+    with c_p1:
+        st.markdown("*Classes d'actifs ciblées*")
+        df_pie1 = df_strat[df_strat['Val_Num'] > 0].groupby('Type')['Val_Num'].sum().reset_index()
+        if not df_pie1.empty:
+            fig1 = px.pie(df_pie1, values='Val_Num', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or-BTC": "#f1c40f", "💵 Cash": "#2ecc71"}, hole=0.4)
+            fig1.update_traces(textposition='inside', textinfo='percent+label')
+            fig1.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
+            st.plotly_chart(fig1, use_container_width=True)
 
-            with c_tg2:
-                st.markdown("**Détail de tous les actifs (y compris Cash/Liquidités)**")
-                if not df_actifs[df_actifs['Val_Num'] > 0].empty:
-                    fig_tg2 = px.pie(df_actifs[df_actifs['Val_Num'] > 0], values='Val_Num', names='Ticker', hole=0.4)
-                    fig_tg2.update_traces(textposition='inside', textinfo='percent+label')
-                    fig_tg2.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10))
-                    st.plotly_chart(fig_tg2, use_container_width=True)
+    with c_p2:
+        st.markdown("*Détail des lignes stratégiques*")
+        if not df_strat.empty:
+            fig2 = px.pie(df_strat[df_strat['Val_Num'] > 0], values='Val_Num', names='Ticker', hole=0.4)
+            fig2.update_traces(textposition='inside', textinfo='percent+label')
+            fig2.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
+            st.plotly_chart(fig2, use_container_width=True)
+
+    st.divider()
+
+    # =========================================================
+    # BLOC 4 : RENTE MENSUELLE
+    # =========================================================
+    st.subheader("🏖️ 4. Liberté Financière (Rente Mensuelle)")
+    c_rente1, c_rente2 = st.columns(2)
+    
+    with c_rente1:
+        inf_estimee_dash = st.slider("Inflation cible (%) ✍️", min_value=0.0, max_value=15.0, value=2.0, step=0.1, key="dash_infl", help="L'inflation est déduite pour garantir la croissance de votre capital et préserver votre pouvoir d'achat futur.")
+        
+    with c_rente2:
+        taux_reel = ((1 + 0.08) / (1 + (inf_estimee_dash / 100.0))) - 1
+        rente_mensuelle_usd = (val_invest * max(0.0, taux_reel)) / 12.0
+        
+        st.metric("Rente Mensuelle Nette (8%)", f"$ {rente_mensuelle_usd:,.2f}")
+        st.caption(f"Pouvoir d'achat garanti : **{rente_mensuelle_usd / TAUX_EUR_USD:,.2f} € / mois**")
+
 
 elif page_choisie == "📋 Liste des actifs":
     st.title("📋 Liste de mes actifs")
@@ -505,7 +509,6 @@ elif page_choisie == "📋 Liste des actifs":
         actualiser_cours_internet(silencieux=False)
         st.rerun()
 
-    # Ajout de la colonne pour l'affichage visuel
     df_actuel['Var. Jour 🔒'] = df_actuel['Ticker'].apply(lambda x: st.session_state.variations.get(str(x).upper(), "→ 0.00 %"))
 
     config_actifs = {
@@ -527,7 +530,6 @@ elif page_choisie == "📋 Liste des actifs":
     new_df = pd.concat([res_i, res_d], ignore_index=True)
     core_cols = ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)"]
     
-    # Si les colonnes modifiables ont changé, on sauvegarde (en ignorant la colonne Var. Jour)
     if not new_df[core_cols].equals(st.session_state.donnees[core_cols]):
         st.session_state.donnees = new_df[core_cols]
         recalculer_totaux_locaux()
