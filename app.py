@@ -403,23 +403,12 @@ if page_choisie == "📊 Tableau de bord":
     # =========================================================
     st.subheader("🌍 2. Total Global (Toutes liquidités incluses)")
     
-    col_tg_met, col_tg_pie = st.columns([1, 2])
+    afficher_montant_double("Total Global", val_total, f"{delta_tg:+,.2f} $ ({pct_delta_tg:+.2f} % depuis le dernier pointage)")
+    color_jour_tg = "#2ecc71" if var_jour_total_global_usd >= 0 else "#e74c3c"
+    symbole_jour_tg = "📈" if var_jour_total_global_usd >= 0 else "📉"
+    st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour_tg} Aujourd'hui : <strong style='color:{color_jour_tg}'>{var_jour_total_global_usd:+,.2f} $ ({pct_jour_total_global:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
     
-    with col_tg_met:
-        afficher_montant_double("Total Global", val_total, f"{delta_tg:+,.2f} $ ({pct_delta_tg:+.2f} % depuis le dernier pointage)")
-        color_jour_tg = "#2ecc71" if var_jour_total_global_usd >= 0 else "#e74c3c"
-        symbole_jour_tg = "📈" if var_jour_total_global_usd >= 0 else "📉"
-        st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour_tg} Aujourd'hui : <strong style='color:{color_jour_tg}'>{var_jour_total_global_usd:+,.2f} $ ({pct_jour_total_global:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
-        
-    with col_tg_pie:
-        df_actifs_global = st.session_state.donnees.copy()
-        df_actifs_global['Val_Num'] = df_actifs_global['Valeur totale'].apply(extraire_nombre)
-        df_pie_tg = df_actifs_global[df_actifs_global['Val_Num'] > 0].groupby('Type')['Val_Num'].sum().reset_index()
-        if not df_pie_tg.empty:
-            fig_tg = px.pie(df_pie_tg, values='Val_Num', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or-BTC": "#f1c40f", "💵 Cash": "#2ecc71"}, hole=0.4)
-            fig_tg.update_traces(textposition='inside', textinfo='percent+label')
-            fig_tg.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), title="Toutes Classes d'actifs confondues", title_x=0.5)
-            st.plotly_chart(fig_tg, use_container_width=True)
+    st.write("")
 
     if not df_p.empty:
         df_viz_tg = df_p.copy()
@@ -471,6 +460,24 @@ if page_choisie == "📊 Tableau de bord":
                 fig_line_tg.update_yaxes(zeroline=False, rangemode="normal")
                 st.plotly_chart(fig_line_tg, use_container_width=True)
 
+        st.write("")
+        st.markdown("**🌍 Répartition du Patrimoine (Total Global)**")
+        
+        c_tg_p1, c_tg_p2 = st.columns(2)
+        with c_tg_p1:
+            st.markdown("*Toutes classes d'actifs confondues*")
+            df_actifs_global = st.session_state.donnees.copy()
+            df_actifs_global['Val_Num'] = df_actifs_global['Valeur totale'].apply(extraire_nombre)
+            df_pie_tg = df_actifs_global[df_actifs_global['Val_Num'] > 0].groupby('Type')['Val_Num'].sum().reset_index()
+            if not df_pie_tg.empty:
+                fig_tg = px.pie(df_pie_tg, values='Val_Num', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or-BTC": "#f1c40f", "💵 Cash": "#2ecc71"}, hole=0.4)
+                fig_tg.update_traces(textposition='inside', textinfo='percent+label')
+                fig_tg.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
+                st.plotly_chart(fig_tg, use_container_width=True)
+                
+    else:
+        st.info("Aucune donnée disponible pour l'analyse globale. Figez d'abord une situation dans l'onglet '🏖️ Suivi'.")
+
     st.divider()
 
     # =========================================================
@@ -478,12 +485,10 @@ if page_choisie == "📊 Tableau de bord":
     # =========================================================
     st.subheader("🎯 3. Actifs Stratégiques (Investissements cibles)")
     
-    col_strat_met, col_strat_vide = st.columns(2)
-    with col_strat_met:
-        afficher_montant_double("Actifs Stratégiques", val_invest, f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
-        color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
-        symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
-        st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
+    afficher_montant_double("Actifs Stratégiques", val_invest, f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
+    color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
+    symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
+    st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
     
     st.write("") 
     
