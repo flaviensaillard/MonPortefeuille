@@ -322,12 +322,13 @@ if page_choisie == "📊 Tableau de bord":
     symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
     c2.markdown(f"<span style='font-size: 0.9em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span>", unsafe_allow_html=True)
     
-    inf_estimee = 2.0 / 100.0
-    taux_reel = ((1 + 0.08) / (1 + inf_estimee)) - 1
-    rente_mensuelle_usd = (val_invest * taux_reel) / 12.0
-    
-    c3.metric("Rente Mensuelle (8%)", f"$ {rente_mensuelle_usd:,.2f}")
-    c3.caption(f"🏖️ Pouvoir d'achat : **{rente_mensuelle_usd / TAUX_EUR_USD:,.2f} € / mois**")
+    with c3:
+        inf_estimee_dash = st.slider("Inflation à déduire (%) ✍️", min_value=0.0, max_value=15.0, value=2.0, step=0.1)
+        taux_reel = ((1 + 0.08) / (1 + (inf_estimee_dash / 100.0))) - 1
+        rente_mensuelle_usd = (val_invest * max(0.0, taux_reel)) / 12.0
+        
+        st.metric("Rente Mensuelle (8%)", f"$ {rente_mensuelle_usd:,.2f}")
+        st.caption(f"🏖️ Pouvoir d'achat : **{rente_mensuelle_usd / TAUX_EUR_USD:,.2f} € / mois**")
     
     st.divider()
 
