@@ -348,7 +348,6 @@ if page_choisie == "📊 Tableau de bord":
             diff = (val_invest * pct_cib) - val_act
             pct_reel = (val_act / val_invest) * 100
             
-            # La règle de déséquilibre : PLUS DE 1000$ ET PLUS DE 2% D'ÉCART
             if abs(diff) >= 1000 and abs(pct_reel - (pct_cib * 100)) >= 2.0:
                 besoin_reequilibrage = True
                 break
@@ -406,8 +405,13 @@ if page_choisie == "📊 Tableau de bord":
                     st.markdown(f"💵 Gains nets actuels : **$ {val_fin:,.2f}**")
                     
             with c2_g:
-                if "ROI" in mode_graph: st.line_chart(df_viz['Evolution cumulée $'])
-                else: st.line_chart(df_viz['Score TWR %'])
+                # MODIFICATION ICI : Utilisation de Plotly pour l'auto-scaling de l'axe Y
+                col_y = 'Evolution cumulée $' if "ROI" in mode_graph else 'Score TWR %'
+                df_plot = df_viz.reset_index()
+                fig_line = px.line(df_plot, x='Date_DT', y=col_y)
+                fig_line.update_layout(xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0))
+                fig_line.update_yaxes(zeroline=False, rangemode="normal")
+                st.plotly_chart(fig_line, use_container_width=True)
             
             st.divider()
             st.subheader("🥧 Répartition de la Stratégie (Rééquilibrage)")
