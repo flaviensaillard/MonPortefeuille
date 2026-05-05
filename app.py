@@ -115,11 +115,13 @@ def recalculer_toute_la_base_projections(df):
     
     resultats = []
     current_twr_mult = 1.0
+    tg_current_twr_mult = 1.0
 
     for i in range(len(df_travail)):
         row = df_travail.iloc[i].to_dict()
         cap = row["Capital investi"]
         actifs = row["Actifs Stratégiques"]
+        tg = row["Total Global"]
         
         if i == 0:
             row["Evolution actifs $"] = 0.0 ; row["Evolution actifs %"] = 0.0
@@ -127,9 +129,16 @@ def recalculer_toute_la_base_projections(df):
             row["Evolution cumulée %"] = ((actifs - cap) / cap * 100) if cap != 0 else 0.0
             r_twr = (actifs - cap) / cap if cap != 0 else 0.0
             current_twr_mult *= (1 + r_twr)
+            
+            row["TG_Evolution cumulée $"] = tg - cap
+            row["TG_Evolution cumulée %"] = ((tg - cap) / cap * 100) if cap != 0 else 0.0
+            tg_r_twr = (tg - cap) / cap if cap != 0 else 0.0
+            tg_current_twr_mult *= (1 + tg_r_twr)
         else:
             prev = df_travail.iloc[i-1]
             diff_cap = cap - prev["Capital investi"]
+            
+            # Pour la stratégie ciblée
             evo_usd = (actifs - prev["Actifs Stratégiques"]) - diff_cap
             row["Evolution actifs $"] = evo_usd
             row["Evolution actifs %"] = (evo_usd / prev["Actifs Stratégiques"] * 100) if prev["Actifs Stratégiques"] != 0 else 0.0
@@ -139,12 +148,21 @@ def recalculer_toute_la_base_projections(df):
             r_twr = evo_usd / base_twr if base_twr != 0 else 0.0
             current_twr_mult *= (1 + r_twr)
             
+            # Pour le total global
+            evo_tg_usd = (tg - prev["Total Global"]) - diff_cap
+            row["TG_Evolution cumulée $"] = tg - cap
+            row["TG_Evolution cumulée %"] = ((tg - cap) / cap * 100) if cap != 0 else 0.0
+            base_tg_twr = prev["Total Global"] + diff_cap
+            tg_r_twr = evo_tg_usd / base_tg_twr if base_tg_twr != 0 else 0.0
+            tg_current_twr_mult *= (1 + tg_r_twr)
+            
         row["Score TWR %"] = (current_twr_mult - 1) * 100
+        row["TG_Score TWR %"] = (tg_current_twr_mult - 1) * 100
         resultats.append(row)
     
     df_final = pd.DataFrame(resultats)
     if 'DT_TRI' in df_final.columns: df_final.drop(columns=['DT_TRI'], inplace=True)
-    ordre = ["Date", "Capital investi", "Actifs Stratégiques", "Total Global", "Evolution actifs $", "Evolution actifs %", "Evolution cumulée $", "Evolution cumulée %", "Score TWR %"]
+    ordre = ["Date", "Capital investi", "Actifs Stratégiques", "Total Global", "Evolution actifs $", "Evolution actifs %", "Evolution cumulée $", "Evolution cumulée %", "Score TWR %", "TG_Evolution cumulée $", "TG_Evolution cumulée %", "TG_Score TWR %"]
     return df_final[ordre]
 
 def recalculer_totaux_locaux():
@@ -359,7 +377,8 @@ if page_choisie == "📊 Tableau de bord":
     # BLOC 2 : TOTAL GLOBAL
     # =========================================================
     st.subheader("🌍 2. Total Global (Toutes liquidités incluses)")
-    col_tg_met, col_tg_pie = st.columns(2)
+    
+    col_tg_met, col_tg_pie = st.columns([1, 2])
     
     with col_tg_met:
         st.metric("Total Global", f"$ {val_total:,.2f}", f"{delta_tg:+,.2f} $ ({pct_delta_tg:+.2f} % depuis le dernier pointage)")
@@ -378,6 +397,57 @@ if page_choisie == "📊 Tableau de bord":
             fig_tg.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), title="Toutes Classes d'actifs confondues", title_x=0.5)
             st.plotly_chart(fig_tg, use_container_width=True)
 
+    if not df_p.empty:
+        df_viz_tg = df_p.copy()
+        df_viz_tg['Date_DT'] = pd.to_datetime(df_viz_tg['Date'], dayfirst=True, errors='coerce')
+        df_viz_tg = df_viz_tg.dropna(subset=['Date_DT']).sort_values('Date_DT').reset_index(drop=True)
+
+        st.markdown("**📈 Évolution & Performance globale**")
+        c_f1_tg, c_f2_tg = st.columns(2)
+        with c_f1_tg: filtre_tg = st.radio("Période globale :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année"], horizontal=True, key="filtre_tg")
+        with c_f2_tg: mode_graph_tg = st.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=True, key="mode_tg")
+
+        now = pd.Timestamp.now()
+        if filtre_tg == "Depuis 1 an": df_viz_tg = df_viz_tg[df_viz_tg['Date_DT'] >= (now - pd.DateOffset(years=1))]
+        elif filtre_tg == "Depuis le début de l'année": df_viz_tg = df_viz_tg[df_viz_tg['Date_DT'] >= pd.Timestamp(year=now.year - 1, month=12, day=31)]
+
+        if df_viz_tg.empty:
+            st.warning("Aucun enregistrement trouvé pour cette période.")
+        else:
+            df_viz_tg.set_index('Date_DT', inplace=True)
+            val_debut_tg = df_viz_tg['TG_Evolution cumulée $'].iloc[0]
+            val_fin_tg = df_viz_tg['TG_Evolution cumulée $'].iloc[-1]
+            actifs_debut_tg = df_viz_tg['Total Global'].iloc[0]
+
+            delta_usd_tg = val_fin_tg - val_debut_tg
+            pct_periode_tg = (delta_usd_tg / actifs_debut_tg * 100) if actifs_debut_tg > 0 else 0.0
+            
+            twr_debut_tg = df_viz_tg['TG_Score TWR %'].iloc[0]
+            twr_fin_tg = df_viz_tg['TG_Score TWR %'].iloc[-1]
+            mult_d_tg, mult_f_tg = 1 + (twr_debut_tg / 100), 1 + (twr_fin_tg / 100)
+            twr_periode_tg = ((mult_f_tg / mult_d_tg) - 1) * 100 if mult_d_tg != 0 else 0.0
+
+            c1_g_tg, c2_g_tg = st.columns([1, 3])
+            with c1_g_tg:
+                if "ROI" in mode_graph_tg:
+                    st.metric("Gains nets globaux ($)", f"$ {val_fin_tg:,.2f}", f"{delta_usd_tg:+,.2f} $ ({pct_periode_tg:+.2f} % sur la période)")
+                    st.caption(f"soit en valeur finale : **{val_fin_tg / TAUX_EUR_USD:,.2f} €**")
+                    pct_global_tg = df_viz_tg['TG_Evolution cumulée %'].iloc[-1]
+                    color_tg = "green" if pct_global_tg > 0 else "red" if pct_global_tg < 0 else "gray"
+                    st.markdown(f"📊 Rentabilité Globale : <strong style='color:{color_tg}'>{pct_global_tg:+.2f} %</strong>", unsafe_allow_html=True)
+                else:
+                    st.metric("Score TWR Global (%)", f"{twr_fin_tg:+.2f} %", f"{twr_periode_tg:+.2f} % (sur la période)")
+                    st.markdown(f"💵 Gains nets actuels : **$ {val_fin_tg:,.2f}**")
+
+            with c2_g_tg:
+                col_y_tg = 'TG_Evolution cumulée $' if "ROI" in mode_graph_tg else 'TG_Score TWR %'
+                df_plot_tg = df_viz_tg.reset_index()
+                fig_line_tg = px.line(df_plot_tg, x='Date_DT', y=col_y_tg)
+                fig_line_tg.update_traces(line_shape='spline')
+                fig_line_tg.update_layout(xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0))
+                fig_line_tg.update_yaxes(zeroline=False, rangemode="normal")
+                st.plotly_chart(fig_line_tg, use_container_width=True)
+
     st.divider()
 
     # =========================================================
@@ -385,13 +455,11 @@ if page_choisie == "📊 Tableau de bord":
     # =========================================================
     st.subheader("🎯 3. Actifs Stratégiques (Investissements cibles)")
     
-    col_strat_met, col_strat_vide = st.columns(2)
-    with col_strat_met:
-        st.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
-        color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
-        symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
-        st.markdown(f"<span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span>", unsafe_allow_html=True)
-        st.caption(f"Soit : **{val_invest / TAUX_EUR_USD:,.2f} €**")
+    st.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
+    color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
+    symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
+    st.markdown(f"<span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span>", unsafe_allow_html=True)
+    st.caption(f"Soit : **{val_invest / TAUX_EUR_USD:,.2f} €**")
     
     st.write("") 
     
@@ -404,8 +472,8 @@ if page_choisie == "📊 Tableau de bord":
         
         st.markdown("**📈 Évolution & Performance de la stratégie**")
         c_f1, c_f2 = st.columns(2)
-        with c_f1: filtre = st.radio("Sélectionnez la période :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année"], horizontal=True)
-        with c_f2: mode_graph = st.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=True)
+        with c_f1: filtre = st.radio("Sélectionnez la période :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année"], horizontal=True, key="filtre_strat")
+        with c_f2: mode_graph = st.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=True, key="mode_strat")
             
         now = pd.Timestamp.now()
         
@@ -431,12 +499,12 @@ if page_choisie == "📊 Tableau de bord":
             c1_g, c2_g = st.columns([1, 3])
             with c1_g:
                 if "ROI" in mode_graph:
-                    st.metric("Gains nets totaux ($)", f"$ {val_fin:,.2f}", f"{delta_usd:+,.2f} $ ({pct_periode:+.2f} % sur la période)")
+                    st.metric("Gains nets de la stratégie ($)", f"$ {val_fin:,.2f}", f"{delta_usd:+,.2f} $ ({pct_periode:+.2f} % sur la période)")
                     st.caption(f"soit en valeur finale : **{val_fin / TAUX_EUR_USD:,.2f} €**")
                     color = "green" if pct_global > 0 else "red" if pct_global < 0 else "gray"
-                    st.markdown(f"📊 Rentabilité Globale : <strong style='color:{color}'>{pct_global:+.2f} %</strong>", unsafe_allow_html=True)
+                    st.markdown(f"📊 Rentabilité Stratégique : <strong style='color:{color}'>{pct_global:+.2f} %</strong>", unsafe_allow_html=True)
                 else:
-                    st.metric("Score TWR Global (%)", f"{twr_fin:+.2f} %", f"{twr_periode:+.2f} % (sur la période)")
+                    st.metric("Score TWR Stratégique (%)", f"{twr_fin:+.2f} %", f"{twr_periode:+.2f} % (sur la période)")
                     st.markdown(f"💵 Gains nets actuels : **$ {val_fin:,.2f}**")
                     
             with c2_g:
@@ -451,7 +519,6 @@ if page_choisie == "📊 Tableau de bord":
     st.write("")
     st.markdown("**🎯 Répartition détaillée de la stratégie**")
     
-    # CALCUL SÉCURISÉ POUR LES CAMEMBERTS DE STRATÉGIE
     df_actifs_dash = st.session_state.donnees.copy()
     df_actifs_dash['Val_Num'] = df_actifs_dash['Valeur totale'].apply(extraire_nombre)
     df_actifs_dash['Pct_Cible'] = df_actifs_dash['Pourcentage (%)'].apply(extraire_nombre)
@@ -484,7 +551,7 @@ if page_choisie == "📊 Tableau de bord":
     c_rente1, c_rente2 = st.columns(2)
     
     with c_rente1:
-        st.write("") # Espace pour l'alignement
+        st.write("") 
         inf_estimee_dash = st.slider("Inflation cible à déduire (%) ✍️", min_value=0.0, max_value=15.0, value=2.0, step=0.1, key="dash_infl", help="L'inflation est déduite pour garantir la croissance de votre capital et préserver votre pouvoir d'achat futur.")
         
     with c_rente2:
@@ -645,7 +712,10 @@ elif page_choisie == "🏖️ Suivi":
             "Evolution actifs %": st.column_config.NumberColumn("Evol. Actifs (%) 🔒", format="%+.2f %%", disabled=True),
             "Evolution cumulée $": st.column_config.NumberColumn("Evol. Cumulée ($) 🔒", format="$ %+.2f", disabled=True),
             "Evolution cumulée %": st.column_config.NumberColumn("Evol. Cumulée (%) 🔒", format="%+.2f %%", disabled=True),
-            "Score TWR %": st.column_config.NumberColumn("Score TWR (%) 🔒", format="%+.2f %%", disabled=True)
+            "Score TWR %": st.column_config.NumberColumn("Score TWR (%) 🔒", format="%+.2f %%", disabled=True),
+            "TG_Evolution cumulée $": st.column_config.NumberColumn("TG Evol. Cumulée ($) 🔒", format="$ %+.2f", disabled=True),
+            "TG_Evolution cumulée %": st.column_config.NumberColumn("TG Evol. Cumulée (%) 🔒", format="%+.2f %%", disabled=True),
+            "TG_Score TWR %": st.column_config.NumberColumn("TG Score TWR (%) 🔒", format="%+.2f %%", disabled=True)
         }
         
         edited_suivi = st.data_editor(df_v.sort_values('DT', ascending=False).drop(columns=['DT']), column_config=config_suivi, use_container_width=True, hide_index=True)
