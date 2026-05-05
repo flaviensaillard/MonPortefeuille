@@ -852,18 +852,20 @@ elif page_choisie == "🌴 Retraite":
         df_historique = df_years[df_years['Année'] < annee_en_cours]
         if not df_historique.empty: moy_brute_hist = round(df_historique['Performance brute (%)'].mean(), 2)
 
-    st.sidebar.subheader("⚙️ Paramètres de Retraite")
-    annee_retraite = st.sidebar.number_input("Année de départ (1er Janvier) ✍️", min_value=annee_en_cours+1, max_value=2100, value=2055, step=1)
-    apport_mensuel = st.sidebar.number_input("Apport mensuel d'aujourd'hui ($) ✍️", min_value=0.00, value=250.00, step=50.00)
-    inflation_estimee = st.sidebar.number_input("Inflation annuelle estimée (%) ✍️", min_value=0.00, value=2.00, step=0.01)
-    rendement_b = st.sidebar.number_input("Performance Scénario B (%) ✍️", min_value=0.00, value=8.00, step=0.01)
+    st.subheader("⚙️ Paramètres du Simulateur")
+    c_p1, c_p2, c_p3 = st.columns(3)
     
+    with c_p1:
+        annee_retraite = st.number_input("Année de départ (1er Janvier) ✍️", min_value=annee_en_cours+1, max_value=2100, value=2055, step=1)
+        apport_mensuel = st.number_input("Apport mensuel d'aujourd'hui ($) ✍️", min_value=0.00, value=250.00, step=50.00)
+    with c_p2:
+        rendement_a = st.number_input("Performance Scénario A (%) ✍️", min_value=0.00, max_value=30.00, value=round(max(0.00, float(moy_brute_hist)), 2), step=0.01, help="Par défaut : moyenne de vos performances passées.")
+        rendement_b = st.number_input("Performance Scénario B (%) ✍️", min_value=0.00, value=8.00, step=0.01)
+    with c_p3:
+        inflation_estimee = st.number_input("Inflation annuelle estimée (%) ✍️", min_value=0.00, value=2.00, step=0.01)
+        taxe_plus_value = st.number_input("Fiscalité sur les retraits (Flat Tax) (%) ✍️", min_value=0.00, max_value=60.00, value=30.00, step=0.10)
+        
     st.info(f"💡 **Info :** Vos apports de {apport_mensuel:,.2f} $ augmenteront de {inflation_estimee:.2f} % chaque année dans le simulateur pour suivre l'évolution de votre salaire et de la vie.")
-    
-    c_s1, c_s2 = st.columns(2)
-    with c_s1: rendement_a = st.slider("Ajuster la Performance (Scénario A) ✍️", min_value=0.00, max_value=30.00, value=round(max(0.00, float(moy_brute_hist)), 2), step=0.01, help="Par défaut : moyenne de vos performances passées.")
-    with c_s2: taxe_plus_value = st.slider("Fiscalité sur les retraits (Flat Tax) (%) ✍️", min_value=0.00, max_value=60.00, value=30.00, step=0.10)
-
     st.divider()
 
     years_range = list(range(annee_en_cours, annee_retraite))
