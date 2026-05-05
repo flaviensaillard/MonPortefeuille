@@ -570,7 +570,7 @@ if page_choisie == "📊 Tableau de bord":
     # =========================================================
     # BLOC 4 : RENTE MENSUELLE
     # =========================================================
-    st.subheader("🏖️ 4. Liberté Financière (Rente Mensuelle)")
+    st.subheader("🏖️ 4. Liberté Financière (Rente Mensuelle actuelle)")
     c_rente1, c_rente2 = st.columns(2)
     
     with c_rente1:
