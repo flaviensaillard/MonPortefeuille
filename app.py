@@ -268,7 +268,6 @@ if page_choisie == "📊 Tableau de bord":
     df_actuel = st.session_state.donnees
     df_p = st.session_state.projections
     
-    # MODIFICATION : Uniquement les actifs présents dans rééquilibrage (Pct > 0)
     val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
     val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
     
@@ -280,7 +279,19 @@ if page_choisie == "📊 Tableau de bord":
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Global", f"$ {val_total:,.2f}")
+    c1.caption(f"🌍 Soit : **{val_total / TAUX_EUR_USD:,.2f} €**")
+    
     c2.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis MAJ)")
+    c2.caption(f"🌍 Soit : **{val_invest / TAUX_EUR_USD:,.2f} €**")
+    
+    # CALCUL DE LA RENTE PERPÉTUELLE ACTUELLE
+    inf_estimee = 2.0 / 100.0 # Hypothèse inflation standard
+    taux_reel = ((1 + 0.08) / (1 + inf_estimee)) - 1
+    rente_mensuelle_usd = (val_invest * taux_reel) / 12.0
+    
+    c3.metric("Rente Mensuelle (8%)", f"$ {rente_mensuelle_usd:,.2f}")
+    c3.caption(f"🏖️ Pouvoir d'achat : **{rente_mensuelle_usd / TAUX_EUR_USD:,.2f} € / mois**")
+    
     st.divider()
     
     if df_p.empty: st.info("Aucune donnée disponible. Figez d'abord une situation dans l'onglet '🏖️ Suivi'.")
@@ -339,7 +350,6 @@ if page_choisie == "📊 Tableau de bord":
             df_actifs['Val_Num'] = df_actifs['Valeur totale'].apply(extraire_nombre)
             df_actifs['Pct_Cible'] = df_actifs['Pourcentage (%)'].apply(extraire_nombre)
             
-            # FILTRE : Uniquement les actifs cibles
             df_strat = df_actifs[df_actifs['Pct_Cible'] > 0]
             
             c_p1, c_p2 = st.columns(2)
@@ -364,7 +374,6 @@ elif page_choisie == "📋 Liste des actifs":
     st.title("📋 Liste de mes actifs")
     
     df_actuel = st.session_state.donnees
-    # Affichage cohérent avec le dashboard
     val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
     val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
     somme_p = sum(extraire_nombre(r["Pourcentage (%)"]) for _, r in df_actuel.iterrows())
@@ -473,7 +482,6 @@ elif page_choisie == "🏖️ Suivi":
     
     if st.button("📸 MAJ Graphiques", use_container_width=True, type="primary"):
         cap = sum(row["Montant $"] if "ajout" in row["Type"].lower() else -row["Montant $"] for _, row in st.session_state.historique.iterrows())
-        # MODIFICATION : Ici aussi on ne suit que les actifs cibles pour la performance
         act = sum(extraire_nombre(r["Valeur totale"]) for _, r in st.session_state.donnees.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
         epg = sum(extraire_nombre(r["Valeur totale"]) for _, r in st.session_state.donnees.iterrows())
         nl = {"Date": datetime.datetime.now().strftime("%d/%m/%Y"), "Capital investi": cap, "Actifs": act, "Epargne totale": epg}
