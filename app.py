@@ -312,23 +312,26 @@ if page_choisie == "📊 Tableau de bord":
         delta = val_invest - derniere_val
         if derniere_val > 0: pct_delta = (delta / derniere_val) * 100
 
-    c1, c2, c3 = st.columns(3)
+    # L'en-tête est maintenant divisé en 4 colonnes
+    c1, c2, c3, c4 = st.columns(4)
+    
     c1.metric("Total Global", f"$ {val_total:,.2f}")
     c1.caption(f"🌍 Soit : **{val_total / TAUX_EUR_USD:,.2f} €**")
     
     c2.metric("Actifs Stratégiques", f"$ {val_invest:,.2f}", f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
-    
     color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
     symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
     c2.markdown(f"<span style='font-size: 0.9em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span>", unsafe_allow_html=True)
     
-    with c3:
-        inf_estimee_dash = st.slider("Inflation à déduire (%) ✍️", min_value=0.0, max_value=15.0, value=2.0, step=0.1)
-        taux_reel = ((1 + 0.08) / (1 + (inf_estimee_dash / 100.0))) - 1
-        rente_mensuelle_usd = (val_invest * max(0.0, taux_reel)) / 12.0
+    with c4:
+        # Le slider se trouve maintenant dans sa propre colonne (la 4ème)
+        inf_estimee_dash = st.slider("Inflation cible (%) ✍️", min_value=0.0, max_value=15.0, value=2.0, step=0.1, key="dash_infl")
         
-        st.metric("Rente Mensuelle (8%)", f"$ {rente_mensuelle_usd:,.2f}")
-        st.caption(f"🏖️ Pouvoir d'achat : **{rente_mensuelle_usd / TAUX_EUR_USD:,.2f} € / mois**")
+    taux_reel = ((1 + 0.08) / (1 + (inf_estimee_dash / 100.0))) - 1
+    rente_mensuelle_usd = (val_invest * max(0.0, taux_reel)) / 12.0
+    
+    c3.metric("Rente Mensuelle (8%)", f"$ {rente_mensuelle_usd:,.2f}")
+    c3.caption(f"🏖️ Pouvoir d'achat : **{rente_mensuelle_usd / TAUX_EUR_USD:,.2f} € / mois**")
     
     st.divider()
 
