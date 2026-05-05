@@ -293,7 +293,6 @@ if page_choisie == "📊 Tableau de bord":
     val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
     val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
     
-    # CALCUL DE LA PROGRESSION DU JOUR
     def parse_var_jour(ticker):
         var_str = st.session_state.variations.get(ticker, "0")
         match = re.search(r'([+-]?\d+\.?\d*)', var_str)
@@ -337,7 +336,6 @@ if page_choisie == "📊 Tableau de bord":
     
     st.divider()
 
-    # --- INDICATEUR VISUEL DE RÉÉQUILIBRAGE ---
     besoin_reequilibrage = False
     if val_invest > 0:
         for _, row in df_actuel.iterrows():
@@ -373,7 +371,8 @@ if page_choisie == "📊 Tableau de bord":
         now = pd.Timestamp.now()
         
         if filtre == "Depuis 1 an": df_viz = df_viz[df_viz['Date_DT'] >= (now - pd.DateOffset(years=1))]
-        elif filtre == "Depuis le début de l'année": df_viz = df_viz[df_viz['Date_DT'] >= pd.Timestamp(year=now.year, month=1, day=1)]
+        # MODIFICATION : Début d'année commence au 31 décembre de l'année précédente
+        elif filtre == "Depuis le début de l'année": df_viz = df_viz[df_viz['Date_DT'] >= pd.Timestamp(year=now.year - 1, month=12, day=31)]
                 
         if df_viz.empty: st.warning(f"Aucun enregistrement trouvé.")
         else:
@@ -405,10 +404,11 @@ if page_choisie == "📊 Tableau de bord":
                     st.markdown(f"💵 Gains nets actuels : **$ {val_fin:,.2f}**")
                     
             with c2_g:
-                # MODIFICATION ICI : Utilisation de Plotly pour l'auto-scaling de l'axe Y
                 col_y = 'Evolution cumulée $' if "ROI" in mode_graph else 'Score TWR %'
                 df_plot = df_viz.reset_index()
                 fig_line = px.line(df_plot, x='Date_DT', y=col_y)
+                # MODIFICATION : Lissage de la courbe (spline)
+                fig_line.update_traces(line_shape='spline')
                 fig_line.update_layout(xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0))
                 fig_line.update_yaxes(zeroline=False, rangemode="normal")
                 st.plotly_chart(fig_line, use_container_width=True)
@@ -763,5 +763,7 @@ elif page_choisie == "🌴 Retraite":
     if trajectory_data:
         df_traj_melted = pd.DataFrame(trajectory_data).melt(id_vars="Année", var_name="Scénario", value_name="Valeur Nette ($)")
         fig = px.line(df_traj_melted, x="Année", y="Valeur Nette ($)", color="Scénario", color_discrete_map={"Capital Net (Scénario A)": "#2ecc71", "Capital Net (Scénario B)": "#3498db"})
+        # MODIFICATION : Lissage de la courbe (spline)
+        fig.update_traces(line_shape='spline')
         fig.update_layout(yaxis_title="Capital Net d'Inflation ($)", xaxis_title="Année", legend_title="")
         st.plotly_chart(fig, use_container_width=True)
