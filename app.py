@@ -65,7 +65,7 @@ def save_sheet(sheet_name, df):
     try:
         ws = sh.worksheet(sheet_name)
     except:
-        # Si l'onglet n'existe pas encore (ex: l'onglet "Config"), le logiciel le crée tout seul !
+        # Si l'onglet n'existe pas encore (ex: l'onglet "Config"), le logiciel le crée tout seul
         ws = sh.add_worksheet(title=sheet_name, rows="100", cols="20")
     ws.clear()
     set_with_dataframe(ws, df, include_index=False)
@@ -344,12 +344,13 @@ if "config" not in st.session_state:
     st.session_state.config = {}
     if not df_config.empty:
         for _, row in df_config.iterrows():
-            st.session_state.config[row["Clé"]] = extraire_nombre(row["Valeur"])
+            if pd.notna(row["Clé"]):
+                st.session_state.config[str(row["Clé"])] = extraire_nombre(row["Valeur"])
     if "apport_dispo" not in st.session_state.config:
         st.session_state.config["apport_dispo"] = 0.0
 
 if "apport_dispo" not in st.session_state:
-    st.session_state.apport_dispo = st.session_state.config["apport_dispo"]
+    st.session_state.apport_dispo = float(st.session_state.config["apport_dispo"])
 
 if "donnees" not in st.session_state:
     st.session_state.donnees = nettoyer_dataframe(load_sheet("Donnees", ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)"]))
@@ -589,7 +590,7 @@ if page_choisie == "📊 Tableau de bord":
                 fig_line_tg.update_traces(line_shape='spline')
                 fig_line_tg.update_layout(xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0))
                 fig_line_tg.update_yaxes(zeroline=False, rangemode="normal")
-                # Format des dates en Jour/Mois/Année (Axe X et Bulle d'information)
+                # Format des dates en Jour/Mois/Année
                 fig_line_tg.update_xaxes(tickformat="%d/%m/%Y", hoverformat="%d/%m/%Y")
                 st.plotly_chart(fig_line_tg, use_container_width=True)
 
@@ -677,7 +678,7 @@ if page_choisie == "📊 Tableau de bord":
                 fig_line.update_traces(line_shape='spline')
                 fig_line.update_layout(xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0))
                 fig_line.update_yaxes(zeroline=False, rangemode="normal")
-                # Format des dates en Jour/Mois/Année (Axe X et Bulle d'information)
+                # Format des dates en Jour/Mois/Année
                 fig_line.update_xaxes(tickformat="%d/%m/%Y", hoverformat="%d/%m/%Y")
                 st.plotly_chart(fig_line, use_container_width=True)
 
@@ -844,19 +845,25 @@ elif page_choisie == "⚖️ Rééquilibrage":
         actualiser_cours_internet(silencieux=False)
         st.rerun()
         
+    def on_apport_change():
+        # Cette fonction s'active dès que tu valides ton chiffre. Elle le sauvegarde dans la base de données.
+        nouvel_apport = st.session_state.apport_input
+        st.session_state.apport_dispo = nouvel_apport
+        st.session_state.config["apport_dispo"] = nouvel_apport
+        df_conf = pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"])
+        save_sheet("Config", df_conf)
+
+    # Ré-injection de la valeur mémorisée dans le bouton quand on revient sur cet onglet
+    if "apport_input" not in st.session_state:
+        st.session_state.apport_input = float(st.session_state.apport_dispo)
+
     cash_dispo = st.number_input(
         "💵 Nouvel apport à investir ($) ✍️", 
         min_value=0.00, 
         step=100.00, 
-        value=float(st.session_state.apport_dispo),
-        key="apport_widget"
+        key="apport_input",
+        on_change=on_apport_change
     )
-    
-    if cash_dispo != st.session_state.apport_dispo:
-        st.session_state.apport_dispo = cash_dispo
-        st.session_state.config["apport_dispo"] = cash_dispo
-        df_config = pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"])
-        save_sheet("Config", df_config)
         
     st.divider()
     df = st.session_state.donnees
@@ -915,12 +922,13 @@ elif page_choisie == "💰 Fonds":
                 st.session_state.historique = pd.concat([df_h, pd.DataFrame([nl])], ignore_index=True)
                 save_sheet("Historique", st.session_state.historique)
                 
+                # Ajout automatique du fond propre dans l'Apport de l'onglet Rééquilibrage
                 if t_m == "Ajout de fond propre": 
                     st.session_state.apport_dispo += m_usd
                     st.session_state.config["apport_dispo"] = st.session_state.apport_dispo
                     df_config = pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"])
                     save_sheet("Config", df_config)
-                
+                    
                 st.rerun()
     
     apports = sum(row["Montant $"] if "ajout" in row["Type"].lower() else -row["Montant $"] for _, row in df_h.iterrows())
