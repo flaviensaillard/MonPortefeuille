@@ -9,6 +9,8 @@ from streamlit_autorefresh import st_autorefresh
 import gspread
 from gspread_dataframe import set_with_dataframe, get_as_dataframe
 from google.oauth2.service_account import Credentials
+import urllib.request
+import json
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Mon Portefeuille", layout="wide")
@@ -215,6 +217,32 @@ def actualiser_cours_internet(silencieux=False):
         for index, row in df_temp.iterrows():
             ticker = str(row.get("Ticker", "")).strip().upper()
             if ticker != "" and ticker != "NAN":
+                
+                # --- MOTEUR 1 : CRYPTO VIA BINANCE (Temps réel et base journalière fixe) ---
+                if ticker.endswith("USDT"):
+                    try:
+                        # Utilisation des 'klines' (bougies) pour récupérer la clôture exacte de la veille à Minuit UTC
+                        url = f"https://api.binance.com/api/v3/klines?symbol={ticker}&interval=1d&limit=2"
+                        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                        with urllib.request.urlopen(req, timeout=5) as response:
+                            data = json.loads(response.read().decode())
+                            if len(data) >= 2:
+                                prev_close = float(data[0][4]) # Clôture de la bougie précédente
+                                prix_usd = float(data[1][4])   # Prix actuel (clôture de la bougie en cours)
+                            else:
+                                prix_usd = float(data[0][4])
+                                prev_close = prix_usd
+                                
+                            var_pct = ((prix_usd - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
+                            symbole = "↗" if var_pct > 0 else ("↘" if var_pct < 0 else "→")
+                            st.session_state.variations[ticker] = f"{symbole} {var_pct:+.2f} %"
+                            df_temp.at[index, "Court"] = f"$ {prix_usd:.2f}"
+                            changement = True
+                            continue  # Succès : on passe directement à la ligne suivante sans appeler Yahoo
+                    except:
+                        pass # En cas d'erreur de l'API Binance, on laisse le filet de sécurité (Yahoo) faire le travail
+
+                # --- MOTEUR 2 : ACTIONS & FOREX VIA YAHOO FINANCE ---
                 try:
                     asset = yf.Ticker(ticker)
                     
@@ -328,7 +356,6 @@ if page_choisie == "📊 Tableau de bord":
     val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
     val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
     
-    # Création du "Point en direct" pour étendre les courbes des graphiques
     cap_actuel = sum(row["Montant $"] if "ajout" in row["Type"].lower() else -row["Montant $"] for _, row in st.session_state.historique.iterrows())
     df_p_live = df_p.copy()
     ligne_live = pd.DataFrame([{
