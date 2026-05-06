@@ -375,12 +375,12 @@ if "inflation" not in st.session_state:
         df_infl.drop_duplicates(subset=['Année'], keep='last', inplace=True)
     st.session_state.inflation = df_infl
 
-# --- AUTO-UPDATE SILENCIEUX DE L'INFLATION ---
+# --- AUTO-UPDATE SILENCIEUX DE L'INFLATION (100% AUTOMATIQUE) ---
 if "inflation_check_done" not in st.session_state:
     st.session_state.inflation_check_done = True
     dict_infl = recuperer_inflation_france()
     
-    if dict_infl and not st.session_state.projections.empty:
+    if dict_infl is not None and not st.session_state.projections.empty:
         df_p_temp = st.session_state.projections.copy()
         df_p_temp['Date_DT'] = pd.to_datetime(df_p_temp['Date'], dayfirst=True, errors='coerce')
         annees_portefeuille = df_p_temp.dropna(subset=['Date_DT'])['Date_DT'].dt.year.unique()
@@ -390,16 +390,20 @@ if "inflation_check_done" not in st.session_state:
         changement = False
         
         for a in annees_portefeuille:
-            val = 0.0
-            if not df_infl_temp[df_infl_temp['Année'] == a].empty:
-                val = df_infl_temp[df_infl_temp['Année'] == a].iloc[0]['Inflation (%)']
+            # S'il n'y a pas encore de chiffre officiel pour cette année, on force à 0.0 par défaut
+            val_officielle = 0.0
+            if a in dict_infl:
+                val_officielle = dict_infl[a]
             
-            # Si la Banque Mondiale a une valeur pour cette année, elle écrase la tienne
-            if a in dict_infl and dict_infl[a] != val:
-                val = dict_infl[a]
+            val_actuelle = 0.0
+            if not df_infl_temp[df_infl_temp['Année'] == a].empty:
+                val_actuelle = df_infl_temp[df_infl_temp['Année'] == a].iloc[0]['Inflation (%)']
+            
+            # Si le chiffre lu diffère du chiffre officiel (ou du 0 par défaut), on corrige
+            if val_officielle != val_actuelle:
                 changement = True
                 
-            nouveau_infl.append({'Année': a, 'Inflation (%)': val})
+            nouveau_infl.append({'Année': a, 'Inflation (%)': val_officielle})
             
         if changement:
             st.session_state.inflation = pd.DataFrame(nouveau_infl)
@@ -849,24 +853,24 @@ elif page_choisie == "⚖️ Rééquilibrage":
         actualiser_cours_internet(silencieux=False)
         st.rerun()
         
-    # --- MÉTHODE BLINDÉE POUR CONSERVER L'APPORT ---
+    def on_apport_change():
+        nouvel_apport = st.session_state.apport_input
+        st.session_state.apport_dispo = nouvel_apport
+        st.session_state.config["apport_dispo"] = nouvel_apport
+        df_conf = pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"])
+        try: save_sheet("Config", df_conf)
+        except Exception: pass
+
+    if "apport_input" not in st.session_state:
+        st.session_state.apport_input = float(st.session_state.apport_dispo)
+
     cash_dispo = st.number_input(
         "💵 Nouvel apport à investir ($) ✍️", 
         min_value=0.00, 
         step=100.00, 
-        value=float(st.session_state.apport_dispo)
+        key="apport_input",
+        on_change=on_apport_change
     )
-    
-    # Si le chiffre affiché est différent de la mémoire, on sauvegarde et on fige
-    if cash_dispo != st.session_state.apport_dispo:
-        st.session_state.apport_dispo = cash_dispo
-        st.session_state.config["apport_dispo"] = cash_dispo
-        df_conf = pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"])
-        try:
-            save_sheet("Config", df_conf)
-        except Exception:
-            pass # Si jamais l'API Google Sheets fait une micro-coupure, on ne plante pas le logiciel
-        st.rerun()
         
     st.divider()
     df = st.session_state.donnees
@@ -930,7 +934,8 @@ elif page_choisie == "💰 Fonds":
                     st.session_state.apport_dispo += m_usd
                     st.session_state.config["apport_dispo"] = st.session_state.apport_dispo
                     df_config = pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"])
-                    save_sheet("Config", df_config)
+                    try: save_sheet("Config", df_config)
+                    except: pass
                     
                 st.rerun()
     
@@ -1032,7 +1037,7 @@ elif page_choisie == "📈 Performance":
         
         st.divider()
         
-        st.write("Ce tableau récapitule vos résultats par année civile. L'inflation officielle est **récupérée et mise à jour automatiquement** depuis la Banque Mondiale. Pour l'année en cours, **double-cliquez sur la colonne 'Inflation ✍️'** pour y saisir votre estimation provisoire.")
+        st.write("Ce tableau récapitule vos résultats par année civile. L'inflation officielle est **récupérée et mise à jour de manière 100% automatique** depuis la Banque Mondiale. Si l'année en cours n'a pas encore de chiffre officiel, la valeur par défaut est de 0 %.")
         
         df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Actifs Stratégiques', 'Valeur Bilan (Or)']].copy()
         df_display.rename(columns={'Actifs Stratégiques': 'Valeur Bilan ($)'}, inplace=True)
@@ -1041,41 +1046,25 @@ elif page_choisie == "📈 Performance":
         # On nettoie drastiquement l'index pour Streamlit
         df_sorted = df_display.sort_values(by='Année', ascending=False).reset_index(drop=True)
 
-        edited_df = st.data_editor(
+        # Remplacement de data_editor par un simple dataframe 100% verrouillé
+        st.dataframe(
             df_sorted,
-            key="inflation_editor", # Clé indispensable pour fixer l'état du tableau
             column_config={
-                "Année": st.column_config.TextColumn("Année 🔒", disabled=True),
-                "Performance brute (%)": st.column_config.NumberColumn("Perf. Brute (%) 🔒", format="%.2f %%", disabled=True),
-                "Inflation (%)": st.column_config.NumberColumn("Inflation ✍️ (%)", format="%.2f %%", step=0.01),
-                "Performance nette (%)": st.column_config.NumberColumn("Perf. Nette (%) 🔒", format="%.2f %%", disabled=True),
-                "Gains Nets ($)": st.column_config.NumberColumn("Gains Nets ($) 🔒", format="$ %.2f", disabled=True),
-                "Valeur Bilan ($)": st.column_config.NumberColumn("Valeur Bilan ($) 🔒", format="$ %.2f", disabled=True),
-                "Valeur Bilan (Or)": st.column_config.NumberColumn("Valeur Bilan (Or) 🔒", format="%.2f oz", disabled=True)
+                "Année": st.column_config.TextColumn("Année 🔒"),
+                "Performance brute (%)": st.column_config.NumberColumn("Perf. Brute (%) 🔒", format="%.2f %%"),
+                "Inflation (%)": st.column_config.NumberColumn("Inflation (%) 🔒", format="%.2f %%"),
+                "Performance nette (%)": st.column_config.NumberColumn("Perf. Nette (%) 🔒", format="%.2f %%"),
+                "Gains Nets ($)": st.column_config.NumberColumn("Gains Nets ($) 🔒", format="$ %.2f"),
+                "Valeur Bilan ($)": st.column_config.NumberColumn("Valeur Bilan ($) 🔒", format="$ %.2f"),
+                "Valeur Bilan (Or)": st.column_config.NumberColumn("Valeur Bilan (Or) 🔒", format="%.2f oz")
             },
             hide_index=True, use_container_width=True
         )
 
-        # Comparaison mathématique blindée contre les bugs de type de Streamlit
-        edited_vals = pd.to_numeric(edited_df['Inflation (%)'], errors='coerce').fillna(0.0).round(4)
-        orig_vals = pd.to_numeric(df_sorted['Inflation (%)'], errors='coerce').fillna(0.0).round(4)
-
-        if not edited_vals.equals(orig_vals):
-            nouveau_df_inflation = edited_df[['Année', 'Inflation (%)']].copy()
-            nouveau_df_inflation['Année'] = nouveau_df_inflation['Année'].astype(int)
-            nouveau_df_inflation['Inflation (%)'] = edited_vals # On injecte la valeur mathématique sûre
-            
-            # On supprime les éventuels doublons corrompus créés par Google Sheets
-            nouveau_df_inflation.drop_duplicates(subset=['Année'], keep='last', inplace=True)
-            
-            st.session_state.inflation = nouveau_df_inflation
-            save_sheet("Inflation", st.session_state.inflation)
-            st.rerun()
-            
         st.divider()
         st.subheader("📊 Comparaison Brute vs Nette")
         
-        df_chart = edited_df.sort_values(by='Année', ascending=True)[['Année', 'Performance brute (%)', 'Performance nette (%)']].melt(id_vars='Année', var_name='Type', value_name='Rentabilité (%)')
+        df_chart = df_sorted.sort_values(by='Année', ascending=True)[['Année', 'Performance brute (%)', 'Performance nette (%)']].melt(id_vars='Année', var_name='Type', value_name='Rentabilité (%)')
         df_chart['Type'] = df_chart['Type'].replace({'Performance brute (%)': "Brute (Avant inflation)", 'Performance nette (%)': "Nette (Pouvoir d'achat réel)"})
         
         fig = px.bar(df_chart, x='Année', y='Rentabilité (%)', color='Type', barmode='group', color_discrete_map={"Brute (Avant inflation)": "#3498db", "Nette (Pouvoir d'achat réel)": "#2ecc71"}, text_auto='.2f')
