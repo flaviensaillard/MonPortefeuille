@@ -346,9 +346,16 @@ if "config" not in st.session_state:
         for _, row in df_config.iterrows():
             if pd.notna(row["Clé"]):
                 st.session_state.config[str(row["Clé"])] = extraire_nombre(row["Valeur"])
+    
+    # Création des clés par défaut si elles n'existent pas encore
     if "apport_dispo" not in st.session_state.config:
         st.session_state.config["apport_dispo"] = 0.0
+    if "retraite_apport_mensuel" not in st.session_state.config:
+        st.session_state.config["retraite_apport_mensuel"] = 250.0
+    if "retraite_taxe" not in st.session_state.config:
+        st.session_state.config["retraite_taxe"] = 30.0
 
+# Initialisation des variables avec la mémoire
 if "apport_dispo" not in st.session_state:
     st.session_state.apport_dispo = float(st.session_state.config["apport_dispo"])
 
@@ -950,33 +957,29 @@ elif page_choisie == "💰 Fonds":
 
 elif page_choisie == "🏖️ Suivi":
     st.title("🏖️ Suivi & Évolution")
-    st.write("Ce tableau enregistre vos points de passage. **Votre robot automatique enregistre une nouvelle ligne chaque nuit.** Vous pouvez modifier les 4 premières colonnes manuellement (✍️) en cas d'erreur. Les autres (🔒) se recalculeront automatiquement.")
+    st.write("Ce tableau enregistre vos points de passage. **Votre robot automatique enregistre une nouvelle ligne chaque nuit.** Ce tableau est en lecture seule (🔒).")
     
     if not st.session_state.projections.empty:
         df_v = st.session_state.projections.copy()
         df_v['DT'] = pd.to_datetime(df_v['Date'], dayfirst=True, errors='coerce')
         
         config_suivi = {
-            "Date": st.column_config.TextColumn("Date ✍️"),
-            "Capital investi": st.column_config.NumberColumn("Capital investi ✍️", format="$ %.2f"),
-            "Actifs Stratégiques": st.column_config.NumberColumn("Actifs Strat. ✍️", format="$ %.2f"),
-            "Total Global": st.column_config.NumberColumn("Total Global ✍️", format="$ %.2f"),
-            "Evolution actifs $": st.column_config.NumberColumn("Evol. Actifs ($) 🔒", format="$ %+.2f", disabled=True),
-            "Evolution actifs %": st.column_config.NumberColumn("Evol. Actifs (%) 🔒", format="%+.2f %%", disabled=True),
-            "Evolution cumulée $": st.column_config.NumberColumn("Evol. Cumulée ($) 🔒", format="$ %+.2f", disabled=True),
-            "Evolution cumulée %": st.column_config.NumberColumn("Evol. Cumulée (%) 🔒", format="%+.2f %%", disabled=True),
-            "Score TWR %": st.column_config.NumberColumn("Score TWR (%) 🔒", format="%+.2f %%", disabled=True),
-            "TG_Evolution cumulée $": st.column_config.NumberColumn("TG Evol. Cumulée ($) 🔒", format="$ %+.2f", disabled=True),
-            "TG_Evolution cumulée %": st.column_config.NumberColumn("TG Evol. Cumulée (%) 🔒", format="%+.2f %%", disabled=True),
-            "TG_Score TWR %": st.column_config.NumberColumn("TG Score TWR (%) 🔒", format="%+.2f %%", disabled=True)
+            "Date": st.column_config.TextColumn("Date 🔒"),
+            "Capital investi": st.column_config.NumberColumn("Capital investi 🔒", format="$ %.2f"),
+            "Actifs Stratégiques": st.column_config.NumberColumn("Actifs Strat. 🔒", format="$ %.2f"),
+            "Total Global": st.column_config.NumberColumn("Total Global 🔒", format="$ %.2f"),
+            "Evolution actifs $": st.column_config.NumberColumn("Evol. Actifs ($) 🔒", format="$ %+.2f"),
+            "Evolution actifs %": st.column_config.NumberColumn("Evol. Actifs (%) 🔒", format="%+.2f %%"),
+            "Evolution cumulée $": st.column_config.NumberColumn("Evol. Cumulée ($) 🔒", format="$ %+.2f"),
+            "Evolution cumulée %": st.column_config.NumberColumn("Evol. Cumulée (%) 🔒", format="%+.2f %%"),
+            "Score TWR %": st.column_config.NumberColumn("Score TWR (%) 🔒", format="%+.2f %%"),
+            "TG_Evolution cumulée $": st.column_config.NumberColumn("TG Evol. Cumulée ($) 🔒", format="$ %+.2f"),
+            "TG_Evolution cumulée %": st.column_config.NumberColumn("TG Evol. Cumulée (%) 🔒", format="%+.2f %%"),
+            "TG_Score TWR %": st.column_config.NumberColumn("TG Score TWR (%) 🔒", format="%+.2f %%")
         }
         
-        edited_suivi = st.data_editor(df_v.sort_values('DT', ascending=False).drop(columns=['DT']), column_config=config_suivi, use_container_width=True, hide_index=True)
-        
-        if not edited_suivi.equals(df_v.sort_values('DT', ascending=False).drop(columns=['DT'])):
-            st.session_state.projections = recalculer_toute_la_base_projections(edited_suivi[["Date", "Capital investi", "Actifs Stratégiques", "Total Global"]])
-            save_sheet("Projections", st.session_state.projections)
-            st.rerun()
+        # Remplacement de l'éditeur par un affichage strict en lecture seule
+        st.dataframe(df_v.sort_values('DT', ascending=False).drop(columns=['DT']), column_config=config_suivi, use_container_width=True, hide_index=True)
 
 elif page_choisie == "📈 Performance":
     st.title("📈 Performances Annuelles & Inflation")
@@ -1046,7 +1049,7 @@ elif page_choisie == "📈 Performance":
         # On nettoie drastiquement l'index pour Streamlit
         df_sorted = df_display.sort_values(by='Année', ascending=False).reset_index(drop=True)
 
-        # Remplacement de data_editor par un simple dataframe 100% verrouillé
+        # Tableau 100% verrouillé
         st.dataframe(
             df_sorted,
             column_config={
@@ -1110,15 +1113,42 @@ elif page_choisie == "🌴 Retraite":
     st.subheader("⚙️ Paramètres du Simulateur")
     c_p1, c_p2, c_p3 = st.columns(3)
     
+    # Déclencheur pour sauvegarder les paramètres du simulateur dans la Config
+    def on_retraite_params_change():
+        st.session_state.config["retraite_apport_mensuel"] = st.session_state.retraite_apport_input
+        st.session_state.config["retraite_taxe"] = st.session_state.retraite_taxe_input
+        df_conf = pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"])
+        try: save_sheet("Config", df_conf)
+        except Exception: pass
+
+    # Initialisation locale depuis la mémoire globale
+    if "retraite_apport_input" not in st.session_state:
+        st.session_state.retraite_apport_input = float(st.session_state.config["retraite_apport_mensuel"])
+    if "retraite_taxe_input" not in st.session_state:
+        st.session_state.retraite_taxe_input = float(st.session_state.config["retraite_taxe"])
+
     with c_p1:
         annee_retraite = st.number_input("Année de départ (1er Janvier) ✍️", min_value=annee_en_cours+1, max_value=2100, value=2055, step=1)
-        apport_mensuel = st.number_input("Apport mensuel d'aujourd'hui ($) ✍️", min_value=0.00, value=250.00, step=50.00)
+        apport_mensuel = st.number_input(
+            "Apport mensuel d'aujourd'hui ($) ✍️", 
+            min_value=0.00, 
+            step=50.00, 
+            key="retraite_apport_input", 
+            on_change=on_retraite_params_change
+        )
     with c_p2:
         rendement_a = st.number_input("Performance Scénario A (%) ✍️", min_value=0.00, max_value=30.00, value=round(max(0.00, float(moy_brute_hist)), 2), step=0.01, help="Par défaut : moyenne de vos performances passées.")
         rendement_b = st.number_input("Performance Scénario B (%) ✍️", min_value=0.00, value=8.00, step=0.01)
     with c_p3:
         inflation_estimee = st.number_input("Inflation annuelle estimée (%) ✍️", min_value=0.00, value=2.00, step=0.01)
-        taxe_plus_value = st.number_input("Fiscalité sur les retraits (Flat Tax) (%) ✍️", min_value=0.00, max_value=60.00, value=30.00, step=0.10)
+        taxe_plus_value = st.number_input(
+            "Fiscalité sur les retraits (Flat Tax) (%) ✍️", 
+            min_value=0.00, 
+            max_value=60.00, 
+            step=0.10, 
+            key="retraite_taxe_input", 
+            on_change=on_retraite_params_change
+        )
         
     st.info(f"💡 **Info :** Vos apports de {apport_mensuel:,.2f} $ augmenteront de {inflation_estimee:.2f} % chaque année dans le simulateur pour suivre l'évolution de votre salaire et de la vie.")
     st.divider()
