@@ -368,7 +368,11 @@ elif "TG_Evolution cumulée $" not in st.session_state.projections.columns:
 
 if "inflation" not in st.session_state:
     df_infl = load_sheet("Inflation", ["Année", "Inflation (%)"])
-    if not df_infl.empty and 'Année' in df_infl.columns: df_infl['Année'] = df_infl['Année'].astype(int)
+    # Nettoyage rigoureux des données corrompues de Google Sheets
+    if not df_infl.empty and 'Année' in df_infl.columns: 
+        df_infl['Année'] = pd.to_numeric(df_infl['Année'], errors='coerce').fillna(0).astype(int)
+        df_infl['Inflation (%)'] = pd.to_numeric(df_infl['Inflation (%)'], errors='coerce').fillna(0.0)
+        df_infl.drop_duplicates(subset=['Année'], keep='last', inplace=True)
     st.session_state.inflation = df_infl
 
 # --- AUTO-UPDATE SILENCIEUX DE L'INFLATION ---
@@ -390,6 +394,7 @@ if "inflation_check_done" not in st.session_state:
             if not df_infl_temp[df_infl_temp['Année'] == a].empty:
                 val = df_infl_temp[df_infl_temp['Année'] == a].iloc[0]['Inflation (%)']
             
+            # Si la Banque Mondiale a une valeur pour cette année, elle écrase la tienne
             if a in dict_infl and dict_infl[a] != val:
                 val = dict_infl[a]
                 changement = True
@@ -849,7 +854,7 @@ elif page_choisie == "⚖️ Rééquilibrage":
         "💵 Nouvel apport à investir ($) ✍️", 
         min_value=0.00, 
         step=100.00, 
-        value=float(st.session_state.apport_dispo) # Injection de la mémoire sans "key"
+        value=float(st.session_state.apport_dispo)
     )
     
     # Si le chiffre affiché est différent de la mémoire, on sauvegarde et on fige
@@ -1038,6 +1043,7 @@ elif page_choisie == "📈 Performance":
 
         edited_df = st.data_editor(
             df_sorted,
+            key="inflation_editor", # Clé indispensable pour fixer l'état du tableau
             column_config={
                 "Année": st.column_config.TextColumn("Année 🔒", disabled=True),
                 "Performance brute (%)": st.column_config.NumberColumn("Perf. Brute (%) 🔒", format="%.2f %%", disabled=True),
@@ -1050,13 +1056,18 @@ elif page_choisie == "📈 Performance":
             hide_index=True, use_container_width=True
         )
 
-        # Comparaison robuste des valeurs en convertissant tout en "float"
-        edited_infl_vals = pd.to_numeric(edited_df['Inflation (%)'], errors='coerce')
-        original_infl_vals = pd.to_numeric(df_sorted['Inflation (%)'], errors='coerce')
+        # Comparaison mathématique blindée contre les bugs de type de Streamlit
+        edited_vals = pd.to_numeric(edited_df['Inflation (%)'], errors='coerce').fillna(0.0).round(4)
+        orig_vals = pd.to_numeric(df_sorted['Inflation (%)'], errors='coerce').fillna(0.0).round(4)
 
-        if not (edited_infl_vals == original_infl_vals).all():
+        if not edited_vals.equals(orig_vals):
             nouveau_df_inflation = edited_df[['Année', 'Inflation (%)']].copy()
             nouveau_df_inflation['Année'] = nouveau_df_inflation['Année'].astype(int)
+            nouveau_df_inflation['Inflation (%)'] = edited_vals # On injecte la valeur mathématique sûre
+            
+            # On supprime les éventuels doublons corrompus créés par Google Sheets
+            nouveau_df_inflation.drop_duplicates(subset=['Année'], keep='last', inplace=True)
+            
             st.session_state.inflation = nouveau_df_inflation
             save_sheet("Inflation", st.session_state.inflation)
             st.rerun()
