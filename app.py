@@ -65,6 +65,7 @@ def save_sheet(sheet_name, df):
     try:
         ws = sh.worksheet(sheet_name)
     except:
+        # Création automatique de l'onglet s'il n'existe pas
         ws = sh.add_worksheet(title=sheet_name, rows=100, cols=20)
     ws.clear()
     set_with_dataframe(ws, df, include_index=False)
@@ -223,6 +224,7 @@ def actualiser_cours_internet(silencieux=False):
                 
                 success_binance = False
                 
+                # --- MOTEUR 1 : CRYPTO VIA BINANCE (Anti-Blocage) ---
                 if ticker_saisi.endswith("USDT"):
                     for base_url in ["https://api.binance.com", "https://api.binance.us"]:
                         try:
@@ -231,8 +233,8 @@ def actualiser_cours_internet(silencieux=False):
                             with urllib.request.urlopen(req, timeout=3) as response:
                                 data = json.loads(response.read().decode())
                                 if len(data) >= 2:
-                                    prev_close = float(data[0][4]) 
-                                    prix_usd = float(data[1][4])   
+                                    prev_close = float(data[0][4]) # Clôture de la veille (Minuit UTC)
+                                    prix_usd = float(data[1][4])   # Prix actuel
                                 else:
                                     prix_usd = float(data[0][4])
                                     prev_close = prix_usd
@@ -243,13 +245,14 @@ def actualiser_cours_internet(silencieux=False):
                                 df_temp.at[index, "Court"] = f"$ {prix_usd:.2f}"
                                 changement = True
                                 success_binance = True
-                                break 
+                                break # Succès : on sort de la boucle de tentative d'URL
                         except:
-                            continue 
+                            continue # Échec : on tente l'URL suivante
                             
                     if success_binance:
-                        continue 
+                        continue # La crypto a été mise à jour avec succès, on passe à l'actif suivant du tableau
 
+                # --- MOTEUR 2 : ACTIONS & FOREX VIA YAHOO FINANCE ---
                 ticker_yf = ticker_saisi.replace("USDT", "-USD") if (ticker_saisi.endswith("USDT") and not success_binance) else ticker_saisi
                 
                 try:
@@ -314,7 +317,7 @@ def actualiser_cours_internet(silencieux=False):
             recalculer_totaux_locaux()
             save_sheet("Donnees", st.session_state.donnees)
 
-@st.cache_data(ttl=86400) 
+@st.cache_data(ttl=86400) # Met en cache le résultat pendant 24h pour ne jamais ralentir ton logiciel
 def recuperer_inflation_france():
     """Récupère l'inflation officielle française via l'API de la Banque Mondiale"""
     try:
@@ -335,6 +338,7 @@ def recuperer_inflation_france():
 # --- 5. CHARGEMENT INITIAL (DEPUIS LE CLOUD) ---
 if "variations" not in st.session_state: st.session_state.variations = {}
 
+# Chargement de la configuration mémoire (Onglet "Config")
 if "config" not in st.session_state:
     df_config = load_sheet("Config", ["Clé", "Valeur"])
     st.session_state.config = {}
@@ -343,6 +347,7 @@ if "config" not in st.session_state:
             if pd.notna(row["Clé"]):
                 st.session_state.config[str(row["Clé"])] = extraire_nombre(row["Valeur"])
     
+    # Création des clés par défaut si elles n'existent pas encore
     if "apport_dispo" not in st.session_state.config:
         st.session_state.config["apport_dispo"] = 0.0
     if "retraite_apport_mensuel" not in st.session_state.config:
@@ -350,6 +355,7 @@ if "config" not in st.session_state:
     if "retraite_taxe" not in st.session_state.config:
         st.session_state.config["retraite_taxe"] = 30.0
 
+# Initialisation des variables avec la mémoire
 if "apport_dispo" not in st.session_state:
     st.session_state.apport_dispo = float(st.session_state.config["apport_dispo"])
 
@@ -369,6 +375,7 @@ elif "TG_Evolution cumulée $" not in st.session_state.projections.columns:
 
 if "inflation" not in st.session_state:
     df_infl = load_sheet("Inflation", ["Année", "Inflation (%)"])
+    # Nettoyage rigoureux des données corrompues de Google Sheets
     if not df_infl.empty and 'Année' in df_infl.columns: 
         df_infl['Année'] = pd.to_numeric(df_infl['Année'], errors='coerce').fillna(0).astype(int)
         df_infl['Inflation (%)'] = pd.to_numeric(df_infl['Inflation (%)'], errors='coerce').fillna(0.0)
@@ -1202,7 +1209,14 @@ elif page_choisie == "🏛️ Fiscalité":
         st.subheader("👤 Ma Situation")
         statut = st.radio("Situation matrimoniale ✍️", ["Célibataire / Divorcé(e) / Veuf(ve)", "Marié(e) / Pacsé(e)"])
         enfants = st.number_input("Nombre d'enfants à charge ✍️", min_value=0, max_value=10, value=0, step=1)
-        salaire = st.number_input("Revenus nets imposables de l'année (Salaires, etc.) en € ✍️", min_value=0.0, value=30000.0, step=1000.0)
+        
+        salaire_1 = st.number_input("Vos revenus nets imposables (Salaires, etc.) en € ✍️", min_value=0.0, value=30000.0, step=1000.0)
+        
+        salaire_2 = 0.0
+        if "Marié" in statut:
+            salaire_2 = st.number_input("Revenus nets imposables de votre conjoint(e) en € ✍️", min_value=0.0, value=30000.0, step=1000.0)
+            
+        salaire_total = salaire_1 + salaire_2
 
     with col2:
         st.subheader("📈 Mon Bilan Boursier de l'année")
@@ -1218,8 +1232,8 @@ elif page_choisie == "🏛️ Fiscalité":
     elif enfants == 2: parts += 1.0
     elif enfants >= 3: parts += 1.0 + (enfants - 2)
 
-    # Abattement de 10% sur les salaires
-    revenu_base = salaire * 0.9
+    # Abattement de 10% sur les salaires pour le foyer fiscal global
+    revenu_base = salaire_total * 0.9
     qf_base = revenu_base / parts
 
     # TMI Brackets (Barème Standard France)
@@ -1243,11 +1257,11 @@ elif page_choisie == "🏛️ Fiscalité":
         
         if tmi < 12.8:
             st.success("✅ **Le Barème Progressif est plus avantageux pour vous !**")
-            st.write(f"Votre Taux Marginal d'Imposition (TMI) estimé sur vos revenus classiques est de **{tmi} %**. En choisissant le barème, vous paierez {tmi} % d'Impôt sur le Revenu + 17.2 % de Prélèvements Sociaux (soit **{taux_bareme_total} %** au total), ce qui est inférieur aux 30 % de la Flat Tax.")
+            st.write(f"Votre Taux Marginal d'Imposition (TMI) calculé pour votre Foyer Fiscal est de **{tmi} %**. En choisissant le barème, vous paierez {tmi} % d'Impôt sur le Revenu + 17.2 % de Prélèvements Sociaux (soit **{taux_bareme_total} %** au total), ce qui est inférieur aux 30 % de la Flat Tax.")
             choix = "Barème"
         else:
             st.success("✅ **La Flat Tax (PFU) est plus avantageuse pour vous !**")
-            st.write(f"Votre Taux Marginal d'Imposition (TMI) estimé sur vos revenus classiques est de **{tmi} %**. Si vous choisissez le barème, vos plus-values seraient taxées à {tmi} % + 17.2 % (soit **{taux_bareme_total} %**). La Flat Tax plafonne votre imposition globale à **30 %**, c'est donc le meilleur choix.")
+            st.write(f"Votre Taux Marginal d'Imposition (TMI) calculé pour votre Foyer Fiscal est de **{tmi} %**. Si vous choisissez le barème, vos plus-values seraient taxées à {tmi} % + 17.2 % (soit **{taux_bareme_total} %**). La Flat Tax plafonne votre imposition globale à **30 %**, c'est donc le meilleur choix.")
             choix = "PFU"
 
     st.divider()
