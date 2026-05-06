@@ -215,36 +215,47 @@ def actualiser_cours_internet(silencieux=False):
             st.session_state.variations = {}
             
         for index, row in df_temp.iterrows():
-            ticker = str(row.get("Ticker", "")).strip().upper()
-            if ticker != "" and ticker != "NAN":
+            ticker_saisi = str(row.get("Ticker", "")).strip().upper()
+            if ticker_saisi != "" and ticker_saisi != "NAN":
                 
-                # --- MOTEUR 1 : CRYPTO VIA BINANCE (Temps réel et base journalière fixe) ---
-                if ticker.endswith("USDT"):
-                    try:
-                        # Utilisation des 'klines' (bougies) pour récupérer la clôture exacte de la veille à Minuit UTC
-                        url = f"https://api.binance.com/api/v3/klines?symbol={ticker}&interval=1d&limit=2"
-                        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-                        with urllib.request.urlopen(req, timeout=5) as response:
-                            data = json.loads(response.read().decode())
-                            if len(data) >= 2:
-                                prev_close = float(data[0][4]) # Clôture de la bougie précédente
-                                prix_usd = float(data[1][4])   # Prix actuel (clôture de la bougie en cours)
-                            else:
-                                prix_usd = float(data[0][4])
-                                prev_close = prix_usd
-                                
-                            var_pct = ((prix_usd - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
-                            symbole = "↗" if var_pct > 0 else ("↘" if var_pct < 0 else "→")
-                            st.session_state.variations[ticker] = f"{symbole} {var_pct:+.2f} %"
-                            df_temp.at[index, "Court"] = f"$ {prix_usd:.2f}"
-                            changement = True
-                            continue  # Succès : on passe directement à la ligne suivante sans appeler Yahoo
-                    except:
-                        pass # En cas d'erreur de l'API Binance, on laisse le filet de sécurité (Yahoo) faire le travail
+                success_binance = False
+                
+                # --- MOTEUR 1 : CRYPTO VIA BINANCE (Anti-Blocage) ---
+                if ticker_saisi.endswith("USDT"):
+                    # On tente Binance Global, puis Binance US pour contourner le blocage des serveurs américains Streamlit
+                    for base_url in ["https://api.binance.com", "https://api.binance.us"]:
+                        try:
+                            url = f"{base_url}/api/v3/klines?symbol={ticker_saisi}&interval=1d&limit=2"
+                            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                            with urllib.request.urlopen(req, timeout=3) as response:
+                                data = json.loads(response.read().decode())
+                                if len(data) >= 2:
+                                    prev_close = float(data[0][4]) # Clôture de la veille (Minuit UTC)
+                                    prix_usd = float(data[1][4])   # Prix actuel
+                                else:
+                                    prix_usd = float(data[0][4])
+                                    prev_close = prix_usd
+                                    
+                                var_pct = ((prix_usd - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
+                                symbole = "↗" if var_pct > 0 else ("↘" if var_pct < 0 else "→")
+                                st.session_state.variations[ticker_saisi] = f"{symbole} {var_pct:+.2f} %"
+                                df_temp.at[index, "Court"] = f"$ {prix_usd:.2f}"
+                                changement = True
+                                success_binance = True
+                                break # Succès : on sort de la boucle de tentative d'URL
+                        except:
+                            continue # Échec : on tente l'URL suivante
+                            
+                    if success_binance:
+                        continue # La crypto a été mise à jour avec succès, on passe à l'actif suivant du tableau
 
                 # --- MOTEUR 2 : ACTIONS & FOREX VIA YAHOO FINANCE ---
+                # Si l'actif n'est pas une crypto, OU si Binance a totalement échoué :
+                # On traduit "BTCUSDT" en "BTC-USD" pour que Yahoo le comprenne.
+                ticker_yf = ticker_saisi.replace("USDT", "-USD") if (ticker_saisi.endswith("USDT") and not success_binance) else ticker_saisi
+                
                 try:
-                    asset = yf.Ticker(ticker)
+                    asset = yf.Ticker(ticker_yf)
                     
                     try: prix_local = float(asset.fast_info.get('lastPrice', 0.0))
                     except:
@@ -262,11 +273,13 @@ def actualiser_cours_internet(silencieux=False):
                         if prev_close > 0.0 and prix_local > 0.0:
                             var_pct = ((prix_local - prev_close) / prev_close) * 100
                             symbole = "↗" if var_pct > 0 else ("↘" if var_pct < 0 else "→")
-                            st.session_state.variations[ticker] = f"{symbole} {var_pct:+.2f} %"
+                            st.session_state.variations[ticker_saisi] = f"{symbole} {var_pct:+.2f} %"
                         else:
-                            st.session_state.variations[ticker] = "→ 0.00 %"
+                            if ticker_saisi not in st.session_state.variations:
+                                st.session_state.variations[ticker_saisi] = "→ 0.00 %"
                     except:
-                        st.session_state.variations[ticker] = "→ 0.00 %"
+                        if ticker_saisi not in st.session_state.variations:
+                                st.session_state.variations[ticker_saisi] = "→ 0.00 %"
                         
                     if prix_local > 0:
                         try: devise = str(asset.fast_info.get('currency', 'USD')).strip().upper()
