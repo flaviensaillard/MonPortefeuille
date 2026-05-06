@@ -62,7 +62,11 @@ def load_sheet(sheet_name, default_cols):
         return pd.DataFrame(columns=default_cols)
 
 def save_sheet(sheet_name, df):
-    ws = sh.worksheet(sheet_name)
+    try:
+        ws = sh.worksheet(sheet_name)
+    except:
+        # Si l'onglet n'existe pas encore (ex: l'onglet "Config"), le logiciel le crée tout seul !
+        ws = sh.add_worksheet(title=sheet_name, rows="100", cols="20")
     ws.clear()
     set_with_dataframe(ws, df, include_index=False)
 
@@ -332,8 +336,20 @@ def recuperer_inflation_france():
     return None
 
 # --- 5. CHARGEMENT INITIAL (DEPUIS LE CLOUD) ---
-if "apport_dispo" not in st.session_state: st.session_state.apport_dispo = 0.0
 if "variations" not in st.session_state: st.session_state.variations = {}
+
+# Chargement du nouvel onglet "Config" pour la mémoire persistante
+if "config" not in st.session_state:
+    df_config = load_sheet("Config", ["Clé", "Valeur"])
+    st.session_state.config = {}
+    if not df_config.empty:
+        for _, row in df_config.iterrows():
+            st.session_state.config[row["Clé"]] = extraire_nombre(row["Valeur"])
+    if "apport_dispo" not in st.session_state.config:
+        st.session_state.config["apport_dispo"] = 0.0
+
+if "apport_dispo" not in st.session_state:
+    st.session_state.apport_dispo = st.session_state.config["apport_dispo"]
 
 if "donnees" not in st.session_state:
     st.session_state.donnees = nettoyer_dataframe(load_sheet("Donnees", ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)"]))
@@ -828,7 +844,20 @@ elif page_choisie == "⚖️ Rééquilibrage":
         actualiser_cours_internet(silencieux=False)
         st.rerun()
         
-    cash_dispo = st.number_input("💵 Nouvel apport à investir ($) ✍️", min_value=0.00, step=100.00, key="apport_dispo")
+    cash_dispo = st.number_input(
+        "💵 Nouvel apport à investir ($) ✍️", 
+        min_value=0.00, 
+        step=100.00, 
+        value=float(st.session_state.apport_dispo),
+        key="apport_widget"
+    )
+    
+    if cash_dispo != st.session_state.apport_dispo:
+        st.session_state.apport_dispo = cash_dispo
+        st.session_state.config["apport_dispo"] = cash_dispo
+        df_config = pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"])
+        save_sheet("Config", df_config)
+        
     st.divider()
     df = st.session_state.donnees
     
@@ -885,7 +914,13 @@ elif page_choisie == "💰 Fonds":
                 nl = {"Date": d_m.strftime("%d/%m/%Y"), "Type": t_m, "Montant $": m_usd, "Montant €": m_eur, "Montant Or": m_usd/or_px}
                 st.session_state.historique = pd.concat([df_h, pd.DataFrame([nl])], ignore_index=True)
                 save_sheet("Historique", st.session_state.historique)
-                if t_m == "Ajout de fond propre": st.session_state.apport_dispo += m_usd
+                
+                if t_m == "Ajout de fond propre": 
+                    st.session_state.apport_dispo += m_usd
+                    st.session_state.config["apport_dispo"] = st.session_state.apport_dispo
+                    df_config = pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"])
+                    save_sheet("Config", df_config)
+                
                 st.rerun()
     
     apports = sum(row["Montant $"] if "ajout" in row["Type"].lower() else -row["Montant $"] for _, row in df_h.iterrows())
