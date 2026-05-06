@@ -115,12 +115,16 @@ def nettoyer_dataframe(df):
     for col in df.columns:
         if "quantit" in str(col).lower() or "qte" in str(col).lower(): df.rename(columns={col: "Quantité"}, inplace=True)
             
+    # Remplacement automatique de l'ancienne catégorie Or-BTC par Crypto
+    if "Type" in df.columns:
+        df["Type"] = df["Type"].replace({"💰 Or-BTC": "₿ Crypto"})
+
     if "Type" not in df.columns:
         df["Type"] = ""
         for idx, row in df.iterrows():
             tick = str(row.get("Ticker", "")).upper()
             if est_devise_liquide(tick): df.at[idx, "Type"] = "💵 Cash"
-            elif "BTC" in tick or "ETH" in tick: df.at[idx, "Type"] = "💰 Or-BTC"
+            elif "BTC" in tick or "ETH" in tick or tick.endswith("USDT"): df.at[idx, "Type"] = "₿ Crypto"
             else: df.at[idx, "Type"] = "🛢️ Action"
 
     for col in cols_finales:
@@ -525,7 +529,7 @@ if page_choisie == "📊 Tableau de bord":
             df_actifs_global['Val_Num'] = df_actifs_global['Valeur totale'].apply(extraire_nombre)
             df_pie_tg = df_actifs_global[df_actifs_global['Val_Num'] > 0].groupby('Type')['Val_Num'].sum().reset_index()
             if not df_pie_tg.empty:
-                fig_tg = px.pie(df_pie_tg, values='Val_Num', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or-BTC": "#f1c40f", "💵 Cash": "#2ecc71"}, hole=0.4)
+                fig_tg = px.pie(df_pie_tg, values='Val_Num', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or": "#f1c40f", "₿ Crypto": "#9b59b6", "💵 Cash": "#2ecc71"}, hole=0.4)
                 fig_tg.update_traces(textposition='inside', textinfo='percent+label')
                 fig_tg.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
                 st.plotly_chart(fig_tg, use_container_width=True)
@@ -614,7 +618,7 @@ if page_choisie == "📊 Tableau de bord":
         st.markdown("*Classes d'actifs ciblées*")
         df_pie1 = df_strat[df_strat['Val_Num'] > 0].groupby('Type')['Val_Num'].sum().reset_index()
         if not df_pie1.empty:
-            fig1 = px.pie(df_pie1, values='Val_Num', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or-BTC": "#f1c40f", "💵 Cash": "#2ecc71"}, hole=0.4)
+            fig1 = px.pie(df_pie1, values='Val_Num', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or": "#f1c40f", "₿ Crypto": "#9b59b6", "💵 Cash": "#2ecc71"}, hole=0.4)
             fig1.update_traces(textposition='inside', textinfo='percent+label')
             fig1.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
             st.plotly_chart(fig1, use_container_width=True)
@@ -672,7 +676,7 @@ elif page_choisie == "📋 Liste des actifs":
 
     config_actifs = {
         "Ticker": st.column_config.TextColumn("Ticker ✍️"),
-        "Type": st.column_config.SelectboxColumn("Type ✍️", options=["🛢️ Action", "📜 Obligation", "💰 Or-BTC", "💵 Cash"]),
+        "Type": st.column_config.SelectboxColumn("Type ✍️", options=["🛢️ Action", "📜 Obligation", "💰 Or", "₿ Crypto", "💵 Cash"]),
         "Court": st.column_config.TextColumn("Court 🔒", disabled=True),
         "Quantité": st.column_config.TextColumn("Quantité ✍️"),
         "Valeur totale": st.column_config.TextColumn("Valeur totale 🔒", disabled=True),
