@@ -313,6 +313,23 @@ def actualiser_cours_internet(silencieux=False):
             recalculer_totaux_locaux()
             save_sheet("Donnees", st.session_state.donnees)
 
+def recuperer_inflation_france():
+    """Récupère l'inflation officielle française via l'API de la Banque Mondiale"""
+    try:
+        url = "https://api.worldbank.org/v2/country/FRA/indicator/FP.CPI.TOTL.ZG?format=json&per_page=20"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            if len(data) == 2 and isinstance(data[1], list):
+                inflation_dict = {}
+                for item in data[1]:
+                    if item['value'] is not None:
+                        inflation_dict[int(item['date'])] = round(float(item['value']), 2)
+                return inflation_dict
+    except:
+        pass
+    return None
+
 # --- 5. CHARGEMENT INITIAL (DEPUIS LE CLOUD) ---
 if "apport_dispo" not in st.session_state: st.session_state.apport_dispo = 0.0
 if "variations" not in st.session_state: st.session_state.variations = {}
@@ -916,7 +933,39 @@ elif page_choisie == "📈 Performance":
         else: st.info("L'historique est insuffisant.")
         
         st.divider()
-        st.write("Ce tableau récapitule vos résultats par année civile. **Double-cliquez sur la colonne 'Inflation ✍️'** pour y saisir l'inflation manuellement. Le reste est verrouillé (🔒).")
+        
+        c_info, c_btn = st.columns([2, 1])
+        with c_info:
+            st.write("Ce tableau récapitule vos résultats par année civile. **Double-cliquez sur la colonne 'Inflation ✍️'** pour y saisir l'inflation manuellement. Le reste est verrouillé (🔒).")
+        with c_btn:
+            if st.button("🤖 Importer l'inflation officielle (France)", use_container_width=True):
+                with st.spinner("Recherche via la Banque Mondiale..."):
+                    dict_infl = recuperer_inflation_france()
+                    if dict_infl:
+                        df_infl_temp = st.session_state.inflation.copy()
+                        annees_portefeuille = df_y['Année'].unique()
+                        nouveau_infl = []
+                        changement = False
+                        
+                        for a in annees_portefeuille:
+                            val = 0.0
+                            if not df_infl_temp[df_infl_temp['Année'] == a].empty:
+                                val = df_infl_temp[df_infl_temp['Année'] == a].iloc[0]['Inflation (%)']
+                            
+                            if a in dict_infl and dict_infl[a] != val:
+                                val = dict_infl[a]
+                                changement = True
+                                
+                            nouveau_infl.append({'Année': a, 'Inflation (%)': val})
+                            
+                        if changement:
+                            st.session_state.inflation = pd.DataFrame(nouveau_infl)
+                            save_sheet("Inflation", st.session_state.inflation)
+                            st.rerun()
+                        else:
+                            st.info("Données déjà à jour !")
+                    else:
+                        st.error("Serveur inaccessible.")
         
         df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Actifs Stratégiques', 'Valeur Bilan (Or)']].copy()
         df_display.columns = ['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Valeur Bilan ($)', 'Valeur Bilan (Or)']
