@@ -65,7 +65,6 @@ def save_sheet(sheet_name, df):
     try:
         ws = sh.worksheet(sheet_name)
     except:
-        # Création automatique de l'onglet s'il n'existe pas
         ws = sh.add_worksheet(title=sheet_name, rows=100, cols=20)
     ws.clear()
     set_with_dataframe(ws, df, include_index=False)
@@ -224,7 +223,6 @@ def actualiser_cours_internet(silencieux=False):
                 
                 success_binance = False
                 
-                # --- MOTEUR 1 : CRYPTO VIA BINANCE (Anti-Blocage) ---
                 if ticker_saisi.endswith("USDT"):
                     for base_url in ["https://api.binance.com", "https://api.binance.us"]:
                         try:
@@ -233,8 +231,8 @@ def actualiser_cours_internet(silencieux=False):
                             with urllib.request.urlopen(req, timeout=3) as response:
                                 data = json.loads(response.read().decode())
                                 if len(data) >= 2:
-                                    prev_close = float(data[0][4]) # Clôture de la veille (Minuit UTC)
-                                    prix_usd = float(data[1][4])   # Prix actuel
+                                    prev_close = float(data[0][4]) 
+                                    prix_usd = float(data[1][4])   
                                 else:
                                     prix_usd = float(data[0][4])
                                     prev_close = prix_usd
@@ -245,14 +243,13 @@ def actualiser_cours_internet(silencieux=False):
                                 df_temp.at[index, "Court"] = f"$ {prix_usd:.2f}"
                                 changement = True
                                 success_binance = True
-                                break # Succès : on sort de la boucle de tentative d'URL
+                                break 
                         except:
-                            continue # Échec : on tente l'URL suivante
+                            continue 
                             
                     if success_binance:
-                        continue # La crypto a été mise à jour avec succès, on passe à l'actif suivant du tableau
+                        continue 
 
-                # --- MOTEUR 2 : ACTIONS & FOREX VIA YAHOO FINANCE ---
                 ticker_yf = ticker_saisi.replace("USDT", "-USD") if (ticker_saisi.endswith("USDT") and not success_binance) else ticker_saisi
                 
                 try:
@@ -317,7 +314,7 @@ def actualiser_cours_internet(silencieux=False):
             recalculer_totaux_locaux()
             save_sheet("Donnees", st.session_state.donnees)
 
-@st.cache_data(ttl=86400) # Met en cache le résultat pendant 24h pour ne jamais ralentir ton logiciel
+@st.cache_data(ttl=86400) 
 def recuperer_inflation_france():
     """Récupère l'inflation officielle française via l'API de la Banque Mondiale"""
     try:
@@ -338,7 +335,6 @@ def recuperer_inflation_france():
 # --- 5. CHARGEMENT INITIAL (DEPUIS LE CLOUD) ---
 if "variations" not in st.session_state: st.session_state.variations = {}
 
-# Chargement de la configuration mémoire (Onglet "Config")
 if "config" not in st.session_state:
     df_config = load_sheet("Config", ["Clé", "Valeur"])
     st.session_state.config = {}
@@ -347,7 +343,6 @@ if "config" not in st.session_state:
             if pd.notna(row["Clé"]):
                 st.session_state.config[str(row["Clé"])] = extraire_nombre(row["Valeur"])
     
-    # Création des clés par défaut si elles n'existent pas encore
     if "apport_dispo" not in st.session_state.config:
         st.session_state.config["apport_dispo"] = 0.0
     if "retraite_apport_mensuel" not in st.session_state.config:
@@ -355,7 +350,6 @@ if "config" not in st.session_state:
     if "retraite_taxe" not in st.session_state.config:
         st.session_state.config["retraite_taxe"] = 30.0
 
-# Initialisation des variables avec la mémoire
 if "apport_dispo" not in st.session_state:
     st.session_state.apport_dispo = float(st.session_state.config["apport_dispo"])
 
@@ -375,7 +369,6 @@ elif "TG_Evolution cumulée $" not in st.session_state.projections.columns:
 
 if "inflation" not in st.session_state:
     df_infl = load_sheet("Inflation", ["Année", "Inflation (%)"])
-    # Nettoyage rigoureux des données corrompues de Google Sheets
     if not df_infl.empty and 'Année' in df_infl.columns: 
         df_infl['Année'] = pd.to_numeric(df_infl['Année'], errors='coerce').fillna(0).astype(int)
         df_infl['Inflation (%)'] = pd.to_numeric(df_infl['Inflation (%)'], errors='coerce').fillna(0.0)
@@ -397,7 +390,6 @@ if "inflation_check_done" not in st.session_state:
         changement = False
         
         for a in annees_portefeuille:
-            # S'il n'y a pas encore de chiffre officiel pour cette année, on force à 0.0 par défaut
             val_officielle = 0.0
             if a in dict_infl:
                 val_officielle = dict_infl[a]
@@ -406,7 +398,6 @@ if "inflation_check_done" not in st.session_state:
             if not df_infl_temp[df_infl_temp['Année'] == a].empty:
                 val_actuelle = df_infl_temp[df_infl_temp['Année'] == a].iloc[0]['Inflation (%)']
             
-            # Si le chiffre lu diffère du chiffre officiel (ou du 0 par défaut), on corrige
             if val_officielle != val_actuelle:
                 changement = True
                 
@@ -427,7 +418,7 @@ if maintenant - st.session_state.dernier_refresh_cours >= 900:
 
 # --- 6. NAVIGATION ---
 st.sidebar.title("Menu")
-page_choisie = st.sidebar.radio("Aller vers :", ["📊 Tableau de bord", "📋 Liste des actifs", "⚖️ Rééquilibrage", "💰 Fonds", "🏖️ Suivi", "📈 Performance", "🌴 Retraite"])
+page_choisie = st.sidebar.radio("Aller vers :", ["📊 Tableau de bord", "📋 Liste des actifs", "⚖️ Rééquilibrage", "💰 Fonds", "🏖️ Suivi", "📈 Performance", "🌴 Retraite", "🏛️ Fiscalité"])
 
 st.sidebar.divider()
 if st.sidebar.button("🔄 Recharger l'application", use_container_width=True):
@@ -968,14 +959,14 @@ elif page_choisie == "🏖️ Suivi":
             "Capital investi": st.column_config.NumberColumn("Capital investi 🔒", format="$ %.2f"),
             "Actifs Stratégiques": st.column_config.NumberColumn("Actifs Strat. 🔒", format="$ %.2f"),
             "Total Global": st.column_config.NumberColumn("Total Global 🔒", format="$ %.2f"),
-            "Evolution actifs $": st.column_config.NumberColumn("Evol. Actifs ($) 🔒", format="$ %+.2f", disabled=True),
-            "Evolution actifs %": st.column_config.NumberColumn("Evol. Actifs (%) 🔒", format="%+.2f %%", disabled=True),
-            "Evolution cumulée $": st.column_config.NumberColumn("Evol. Cumulée ($) 🔒", format="$ %+.2f", disabled=True),
-            "Evolution cumulée %": st.column_config.NumberColumn("Evol. Cumulée (%) 🔒", format="%+.2f %%", disabled=True),
-            "Score TWR %": st.column_config.NumberColumn("Score TWR (%) 🔒", format="%+.2f %%", disabled=True),
-            "TG_Evolution cumulée $": st.column_config.NumberColumn("TG Evol. Cumulée ($) 🔒", format="$ %+.2f", disabled=True),
-            "TG_Evolution cumulée %": st.column_config.NumberColumn("TG Evol. Cumulée (%) 🔒", format="%+.2f %%", disabled=True),
-            "TG_Score TWR %": st.column_config.NumberColumn("TG Score TWR (%) 🔒", format="%+.2f %%", disabled=True)
+            "Evolution actifs $": st.column_config.NumberColumn("Evol. Actifs ($) 🔒", format="$ %+.2f"),
+            "Evolution actifs %": st.column_config.NumberColumn("Evol. Actifs (%) 🔒", format="%+.2f %%"),
+            "Evolution cumulée $": st.column_config.NumberColumn("Evol. Cumulée ($) 🔒", format="$ %+.2f"),
+            "Evolution cumulée %": st.column_config.NumberColumn("Evol. Cumulée (%) 🔒", format="%+.2f %%"),
+            "Score TWR %": st.column_config.NumberColumn("Score TWR (%) 🔒", format="%+.2f %%"),
+            "TG_Evolution cumulée $": st.column_config.NumberColumn("TG Evol. Cumulée ($) 🔒", format="$ %+.2f"),
+            "TG_Evolution cumulée %": st.column_config.NumberColumn("TG Evol. Cumulée (%) 🔒", format="%+.2f %%"),
+            "TG_Score TWR %": st.column_config.NumberColumn("TG Score TWR (%) 🔒", format="%+.2f %%")
         }
         
         st.dataframe(df_v.sort_values('DT', ascending=False).drop(columns=['DT']), column_config=config_suivi, use_container_width=True, hide_index=True)
@@ -1120,13 +1111,17 @@ elif page_choisie == "🌴 Retraite":
         try: save_sheet("Config", df_conf)
         except Exception: pass
 
+    if "retraite_apport_input" not in st.session_state:
+        st.session_state.retraite_apport_input = float(st.session_state.config["retraite_apport_mensuel"])
+    if "retraite_taxe_input" not in st.session_state:
+        st.session_state.retraite_taxe_input = float(st.session_state.config["retraite_taxe"])
+
     with c_p1:
         annee_retraite = st.number_input("Année de départ (1er Janvier) ✍️", min_value=annee_en_cours+1, max_value=2100, value=2055, step=1)
         apport_mensuel = st.number_input(
             "Apport mensuel d'aujourd'hui ($) ✍️", 
             min_value=0.00, 
             step=50.00, 
-            value=float(st.session_state.config.get("retraite_apport_mensuel", 250.0)),
             key="retraite_apport_input", 
             on_change=on_retraite_params_change
         )
@@ -1140,7 +1135,6 @@ elif page_choisie == "🌴 Retraite":
             min_value=0.00, 
             max_value=60.00, 
             step=0.10, 
-            value=float(st.session_state.config.get("retraite_taxe", 30.0)),
             key="retraite_taxe_input", 
             on_change=on_retraite_params_change
         )
@@ -1198,3 +1192,90 @@ elif page_choisie == "🌴 Retraite":
         fig.update_traces(line_shape='spline')
         fig.update_layout(yaxis_title="Capital Net d'Inflation ($)", xaxis_title="Année", legend_title="")
         st.plotly_chart(fig, use_container_width=True)
+
+elif page_choisie == "🏛️ Fiscalité":
+    st.title("🏛️ Simulateur Fiscal & Déclaration")
+    st.write("Cet outil vous aide à choisir la meilleure option d'imposition pour vos plus-values boursières (Flat Tax ou Barème) et vous indique précisément les cases à remplir sur votre déclaration d'impôts française.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("👤 Ma Situation")
+        statut = st.radio("Situation matrimoniale ✍️", ["Célibataire / Divorcé(e) / Veuf(ve)", "Marié(e) / Pacsé(e)"])
+        enfants = st.number_input("Nombre d'enfants à charge ✍️", min_value=0, max_value=10, value=0, step=1)
+        salaire = st.number_input("Revenus nets imposables de l'année (Salaires, etc.) en € ✍️", min_value=0.0, value=30000.0, step=1000.0)
+
+    with col2:
+        st.subheader("📈 Mon Bilan Boursier de l'année")
+        st.info("💡 Puisque vous utilisez un courtier étranger (Swissquote), assurez-vous de convertir vos montants en **Euros**.")
+        plus_values = st.number_input("Total des Plus-Values encaissées (€) ✍️", min_value=0.0, value=0.0, step=100.0)
+        moins_values = st.number_input("Total des Moins-Values actées (€) ✍️", min_value=0.0, value=0.0, step=100.0)
+
+    st.divider()
+
+    # --- CALCUL DU QUOTIENT FAMILIAL ---
+    parts = 1.0 if "Célibataire" in statut else 2.0
+    if enfants == 1: parts += 0.5
+    elif enfants == 2: parts += 1.0
+    elif enfants >= 3: parts += 1.0 + (enfants - 2)
+
+    # Abattement de 10% sur les salaires
+    revenu_base = salaire * 0.9
+    qf_base = revenu_base / parts
+
+    # TMI Brackets (Barème Standard France)
+    if qf_base <= 11294: tmi = 0
+    elif qf_base <= 28797: tmi = 11
+    elif qf_base <= 82341: tmi = 30
+    elif qf_base <= 177106: tmi = 41
+    else: tmi = 45
+
+    bilan_net = plus_values - moins_values
+
+    st.subheader("💡 Recommandation d'imposition")
+
+    if bilan_net <= 0:
+        st.success("✅ **Bilan Négatif ou Nul :** Vous n'avez pas d'impôts à payer sur vos cessions boursières cette année. Vos moins-values sont reportables pendant 10 ans.")
+        choix = "Aucun (Bilan négatif)"
+    else:
+        # PFU = 12.8% IR + 17.2% PS = 30%
+        # Barème = TMI + 17.2% PS
+        taux_bareme_total = tmi + 17.2
+        
+        if tmi < 12.8:
+            st.success("✅ **Le Barème Progressif est plus avantageux pour vous !**")
+            st.write(f"Votre Taux Marginal d'Imposition (TMI) estimé sur vos revenus classiques est de **{tmi} %**. En choisissant le barème, vous paierez {tmi} % d'Impôt sur le Revenu + 17.2 % de Prélèvements Sociaux (soit **{taux_bareme_total} %** au total), ce qui est inférieur aux 30 % de la Flat Tax.")
+            choix = "Barème"
+        else:
+            st.success("✅ **La Flat Tax (PFU) est plus avantageuse pour vous !**")
+            st.write(f"Votre Taux Marginal d'Imposition (TMI) estimé sur vos revenus classiques est de **{tmi} %**. Si vous choisissez le barème, vos plus-values seraient taxées à {tmi} % + 17.2 % (soit **{taux_bareme_total} %**). La Flat Tax plafonne votre imposition globale à **30 %**, c'est donc le meilleur choix.")
+            choix = "PFU"
+
+    st.divider()
+    st.subheader("📝 Comment remplir votre déclaration d'impôts")
+    
+    c_decl1, c_decl2 = st.columns(2)
+    
+    with c_decl1:
+        st.markdown("### 1. Déclaration du compte")
+        st.markdown("Vous devez déclarer votre compte ouvert à l'étranger via le **Formulaire 3916**.")
+        st.markdown("- **Case 8UU (sur la 2042) :** À cocher absolument.")
+        st.markdown("- **Informations Swissquote :**")
+        st.markdown("  - *Intitulé :* Swissquote Bank SA")
+        st.markdown("  - *Adresse :* Chemin de la Crétaux 33, 1196 Gland, Suisse")
+        
+    with c_decl2:
+        st.markdown("### 2. Vos plus-values")
+        st.markdown("Ces montants sont à reporter sur le **Formulaire 2042** (et potentiellement l'annexe 2074).")
+        if bilan_net > 0:
+            st.markdown(f"- **Case 3VG** (Plus-values nettes) : Indiquer **{bilan_net:,.0f} €**")
+            if choix == "Barème":
+                st.markdown("- **Case 2OP** : **À cocher absolument** (Option globale pour l'imposition au barème).")
+            else:
+                st.markdown("- **Case 2OP** : **À laisser DÉCOCHÉE** (Pour bénéficier de la Flat Tax de 30%).")
+        elif bilan_net < 0:
+            st.markdown(f"- **Case 3VH** (Moins-values nettes) : Indiquer **{abs(bilan_net):,.0f} €**")
+            st.markdown("*(L'administration fiscale mettra cette moins-value en réserve pour la déduire de vos éventuels gains pendant 10 ans).*")
+        else:
+            st.markdown("- **Rien à déclarer** en cases 3VG ou 3VH car votre bilan est de 0 €.")
+            
+        st.markdown("*(Note : Si vous avez touché des dividendes en cash, ils sont à déclarer dans les cases 2DC/2CG, en passant par le formulaire 2047 pour les revenus étrangers).*")
