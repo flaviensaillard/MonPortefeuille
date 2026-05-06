@@ -332,18 +332,39 @@ def recuperer_inflation_france():
     return None
 
 @st.cache_data(ttl=3600)
-def get_historical_fx(devise, date_str):
-    """Récupère le taux de change vers l'EUR à une date précise pour la fiscalité"""
-    if str(devise).upper() == "EUR": return 1.0
-    ticker = f"{devise.upper()}EUR=X"
+def get_historical_fx(devise, date_val):
+    """Récupère le taux de change vers l'EUR à une date précise pour la fiscalité (Blindé)"""
+    devise_clean = str(devise).upper().strip()
+    if devise_clean in ["EUR", ""]: return 1.0
+    
+    ticker = f"{devise_clean}EUR=X"
+    
     try:
-        d = datetime.datetime.strptime(date_str, "%d/%m/%Y")
-        d_start = d - datetime.timedelta(days=4)
-        data = yf.download(ticker, start=d_start, end=d + datetime.timedelta(days=1), progress=False)
-        if not data.empty:
-            return float(data['Close'].iloc[-1])
-    except: pass
-    # En cas d'erreur de téléchargement (ex: pas de connexion), on retourne 1.0 pour ne pas planter
+        # Conversion robuste de la date (accepte string ou datetime pandas)
+        d = pd.to_datetime(date_val, dayfirst=True, errors='coerce')
+        if pd.isna(d): return 1.0
+        
+        # Si la date est aujourd'hui ou dans le futur (ou très récente), on prend le cours direct
+        if d >= pd.Timestamp.now() - pd.Timedelta(days=1):
+            hist = yf.Ticker(ticker).history(period="1d")
+            if not hist.empty: return float(hist['Close'].iloc[-1])
+            return 1.0
+        
+        # On remonte jusqu'à 5 jours en arrière pour contourner les week-ends et jours fériés boursiers
+        d_start = d - pd.Timedelta(days=5)
+        d_end = d + pd.Timedelta(days=1)
+        
+        hist = yf.Ticker(ticker).history(start=d_start.strftime('%Y-%m-%d'), end=d_end.strftime('%Y-%m-%d'))
+        if not hist.empty:
+            return float(hist['Close'].iloc[-1])
+            
+        # Si rien n'est trouvé dans le passé, on prend la valeur actuelle
+        hist_fallback = yf.Ticker(ticker).history(period="1d")
+        if not hist_fallback.empty: return float(hist_fallback['Close'].iloc[-1])
+        
+    except:
+        pass
+        
     return 1.0
 
 # --- 5. CHARGEMENT INITIAL (DEPUIS LE CLOUD) ---
@@ -388,6 +409,12 @@ if "inflation" not in st.session_state:
         df_infl['Inflation (%)'] = pd.to_numeric(df_infl['Inflation (%)'], errors='coerce').fillna(0.0)
         df_infl.drop_duplicates(subset=['Année'], keep='last', inplace=True)
     st.session_state.inflation = df_infl
+
+if "cessions" not in st.session_state:
+    df_c = load_sheet("Cessions", ["Actif", "Date de vente", "Quantité vendue", "PRU (€)", "Prix de revente total net (€)", "Résultat (€)"])
+    for col in ["Quantité vendue", "PRU (€)", "Prix de revente total net (€)", "Résultat (€)"]:
+        if col in df_c.columns: df_c[col] = df_c[col].apply(extraire_nombre)
+    st.session_state.cessions = df_c
 
 if "transactions" not in st.session_state:
     df_trans = load_sheet("Transaction", ["Ticker", "Type", "Date", "Quantité", "Cours", "Frais", "Montant Net", "Devise"])
@@ -655,7 +682,6 @@ if page_choisie == "📊 Tableau de bord":
         with c_f2: mode_graph = st.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=True, key="mode_strat")
             
         now = pd.Timestamp.now()
-        
         if filtre == "Depuis 1 an": df_viz = df_viz[df_viz['Date_DT'] >= (now - pd.DateOffset(years=1))]
         elif filtre == "Depuis le début de l'année": df_viz = df_viz[df_viz['Date_DT'] >= pd.Timestamp(year=now.year - 1, month=12, day=31)]
                 
@@ -1254,8 +1280,7 @@ elif page_choisie == "🏛️ Fiscalité":
             pv_devise = net - cout_de_la_vente
             
             # Conversion en EUR à la date exacte
-            taux_eur = get_historical_fx(devise, date_t)
-            # Si le taux est ex: USDEUR=X, on multiplie. (ex: 1 USD = 0.92 EUR -> pv_devise * 0.92)
+            taux_eur = get_historical_fx(devise, row['Date_DT'])
             pv_eur = pv_devise * taux_eur
             
             # Mise à jour du stock
@@ -1289,7 +1314,6 @@ elif page_choisie == "🏛️ Fiscalité":
     else:
         st.write("Ce tableau est généré automatiquement d'après vos transactions. Les conversions en Euros utilisent les taux de change historiques exacts du jour de chaque vente.")
         
-        # Séparation Actions vs Cryptos pour les onglets
         df_actions = df_fiscal[df_fiscal["Catégorie"] == "Action/ETF"]
         df_cryptos = df_fiscal[df_fiscal["Catégorie"] == "Crypto"]
         
