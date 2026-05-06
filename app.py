@@ -971,7 +971,8 @@ elif page_choisie == "📈 Performance":
         
         st.write("Ce tableau récapitule vos résultats par année civile. L'inflation officielle est **récupérée et mise à jour automatiquement** depuis la Banque Mondiale. Pour l'année en cours, **double-cliquez sur la colonne 'Inflation ✍️'** pour y saisir votre estimation provisoire.")
         
-        df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Valeur Bilan ($)', 'Valeur Bilan (Or)']].copy()
+        df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Actifs Stratégiques', 'Valeur Bilan (Or)']].copy()
+        df_display.rename(columns={'Actifs Stratégiques': 'Valeur Bilan ($)'}, inplace=True)
         df_display['Année'] = df_display['Année'].astype(str)
 
         # On nettoie drastiquement l'index pour Streamlit
