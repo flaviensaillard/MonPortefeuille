@@ -313,6 +313,7 @@ def actualiser_cours_internet(silencieux=False):
             recalculer_totaux_locaux()
             save_sheet("Donnees", st.session_state.donnees)
 
+@st.cache_data(ttl=86400) # Met en cache le résultat pendant 24h pour ne jamais ralentir ton logiciel
 def recuperer_inflation_france():
     """Récupère l'inflation officielle française via l'API de la Banque Mondiale"""
     try:
@@ -352,6 +353,36 @@ if "inflation" not in st.session_state:
     df_infl = load_sheet("Inflation", ["Année", "Inflation (%)"])
     if not df_infl.empty and 'Année' in df_infl.columns: df_infl['Année'] = df_infl['Année'].astype(int)
     st.session_state.inflation = df_infl
+
+# --- AUTO-UPDATE SILENCIEUX DE L'INFLATION ---
+if "inflation_check_done" not in st.session_state:
+    st.session_state.inflation_check_done = True
+    dict_infl = recuperer_inflation_france()
+    
+    if dict_infl and not st.session_state.projections.empty:
+        df_p_temp = st.session_state.projections.copy()
+        df_p_temp['Date_DT'] = pd.to_datetime(df_p_temp['Date'], dayfirst=True, errors='coerce')
+        annees_portefeuille = df_p_temp.dropna(subset=['Date_DT'])['Date_DT'].dt.year.unique()
+        
+        df_infl_temp = st.session_state.inflation.copy()
+        nouveau_infl = []
+        changement = False
+        
+        for a in annees_portefeuille:
+            val = 0.0
+            if not df_infl_temp[df_infl_temp['Année'] == a].empty:
+                val = df_infl_temp[df_infl_temp['Année'] == a].iloc[0]['Inflation (%)']
+            
+            # Si la Banque Mondiale a une valeur pour cette année, elle écrase la tienne
+            if a in dict_infl and dict_infl[a] != val:
+                val = dict_infl[a]
+                changement = True
+                
+            nouveau_infl.append({'Année': a, 'Inflation (%)': val})
+            
+        if changement:
+            st.session_state.inflation = pd.DataFrame(nouveau_infl)
+            save_sheet("Inflation", st.session_state.inflation)
 
 # --- GESTION DU CHRONOMÈTRE ---
 if "dernier_refresh_cours" not in st.session_state:
@@ -934,38 +965,7 @@ elif page_choisie == "📈 Performance":
         
         st.divider()
         
-        c_info, c_btn = st.columns([2, 1])
-        with c_info:
-            st.write("Ce tableau récapitule vos résultats par année civile. **Double-cliquez sur la colonne 'Inflation ✍️'** pour y saisir l'inflation manuellement. Le reste est verrouillé (🔒).")
-        with c_btn:
-            if st.button("🤖 Importer l'inflation officielle (France)", use_container_width=True):
-                with st.spinner("Recherche via la Banque Mondiale..."):
-                    dict_infl = recuperer_inflation_france()
-                    if dict_infl:
-                        df_infl_temp = st.session_state.inflation.copy()
-                        annees_portefeuille = df_y['Année'].unique()
-                        nouveau_infl = []
-                        changement = False
-                        
-                        for a in annees_portefeuille:
-                            val = 0.0
-                            if not df_infl_temp[df_infl_temp['Année'] == a].empty:
-                                val = df_infl_temp[df_infl_temp['Année'] == a].iloc[0]['Inflation (%)']
-                            
-                            if a in dict_infl and dict_infl[a] != val:
-                                val = dict_infl[a]
-                                changement = True
-                                
-                            nouveau_infl.append({'Année': a, 'Inflation (%)': val})
-                            
-                        if changement:
-                            st.session_state.inflation = pd.DataFrame(nouveau_infl)
-                            save_sheet("Inflation", st.session_state.inflation)
-                            st.rerun()
-                        else:
-                            st.info("Données déjà à jour !")
-                    else:
-                        st.error("Serveur inaccessible.")
+        st.write("Ce tableau récapitule vos résultats par année civile. L'inflation officielle est **récupérée et mise à jour automatiquement** depuis la Banque Mondiale. Pour l'année en cours, **double-cliquez sur la colonne 'Inflation ✍️'** pour y saisir votre estimation provisoire.")
         
         df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Actifs Stratégiques', 'Valeur Bilan (Or)']].copy()
         df_display.columns = ['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Valeur Bilan ($)', 'Valeur Bilan (Or)']
