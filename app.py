@@ -699,7 +699,28 @@ elif page_choisie == "📋 Liste des actifs":
         symbole_jour_tg = "📈" if var_jour_total_global_usd >= 0 else "📉"
         st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour_tg} Aujourd'hui : <strong style='color:{color_jour_tg}'>{var_jour_total_global_usd:+,.2f} $ ({pct_jour_total_global:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
     
-    c3.metric("Répartition Cible", f"{round(somme_p, 2):.2f}%", f"{round(100 - somme_p, 2):.2f}% restant", delta_color="inverse" if somme_p > 100 else "normal")
+    with c3:
+        ecart = round(100 - somme_p, 2)
+        if ecart == 0:
+            info_str = "✅ Cible atteinte"
+            color_info = "#2ecc71"
+        elif ecart > 0:
+            info_str = f"⚠️ {ecart:.2f} % manquant"
+            color_info = "#e74c3c"
+        else:
+            info_str = f"⚠️ {abs(ecart):.2f} % en trop"
+            color_info = "#e74c3c"
+            
+        html_repartition = f"""
+        <div style="margin-bottom: 0.8rem;">
+            <div style="font-size: 0.9rem; opacity: 0.8; margin-bottom: 0.2rem;">Répartition Cible</div>
+            <div style="font-size: 1.8rem; font-weight: 600; line-height: 1.2;">
+                {somme_p:.2f} %
+            </div>
+            <div style='font-size: 0.9rem; font-weight: 600; color: {color_info}; padding-top: 0.2rem;'>{info_str}</div>
+        </div>
+        """
+        st.markdown(html_repartition, unsafe_allow_html=True)
 
     st.divider()
 
