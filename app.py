@@ -316,7 +316,6 @@ def actualiser_cours_internet(silencieux=False):
 
 @st.cache_data(ttl=86400) 
 def recuperer_inflation_france():
-    """Récupère l'inflation officielle française via l'API de la Banque Mondiale"""
     try:
         url = "https://api.worldbank.org/v2/country/FRA/indicator/FP.CPI.TOTL.ZG?format=json&per_page=20"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -343,7 +342,6 @@ if "config" not in st.session_state:
             if pd.notna(row["Clé"]):
                 st.session_state.config[str(row["Clé"])] = extraire_nombre(row["Valeur"])
 
-# Création des clés par défaut si elles n'existent pas encore
 if "apport_dispo" not in st.session_state.config:
     st.session_state.config["apport_dispo"] = 0.0
 if "retraite_apport_mensuel" not in st.session_state.config:
@@ -375,6 +373,12 @@ if "inflation" not in st.session_state:
         df_infl['Inflation (%)'] = pd.to_numeric(df_infl['Inflation (%)'], errors='coerce').fillna(0.0)
         df_infl.drop_duplicates(subset=['Année'], keep='last', inplace=True)
     st.session_state.inflation = df_infl
+
+if "cessions" not in st.session_state:
+    df_c = load_sheet("Cessions", ["Actif", "Date de vente", "Quantité vendue", "PRU (€)", "Prix de revente total net (€)", "Résultat (€)"])
+    for col in ["Quantité vendue", "PRU (€)", "Prix de revente total net (€)", "Résultat (€)"]:
+        if col in df_c.columns: df_c[col] = df_c[col].apply(extraire_nombre)
+    st.session_state.cessions = df_c
 
 # --- AUTO-UPDATE SILENCIEUX DE L'INFLATION ---
 if "inflation_check_done" not in st.session_state:
@@ -431,7 +435,6 @@ if st.sidebar.button("🔄 Recharger l'application", use_container_width=True):
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
     
-    # --- PRÉ-CALCULS DES DONNÉES ---
     df_actuel = st.session_state.donnees
     df_p = st.session_state.projections
     
@@ -476,7 +479,6 @@ if page_choisie == "📊 Tableau de bord":
     pct_jour_total_global = (var_jour_total_global_usd / val_total_veille * 100) if val_total_veille > 0 else 0.0
     pct_jour_total = (var_jour_total_usd / val_invest_veille * 100) if val_invest_veille > 0 else 0.0
     
-    # --- CALCUL DELTA 1 AN GLISSANT ---
     delta = pct_delta = 0.0
     delta_tg = pct_delta_tg = 0.0
     
@@ -487,13 +489,13 @@ if page_choisie == "📊 Tableau de bord":
         
         if not df_p_dates.empty:
             now_dt = pd.Timestamp.now()
-            target_dt = now_dt - pd.DateOffset(years=1) # On remonte à 1 an (365 jours)
+            target_dt = now_dt - pd.DateOffset(years=1) 
             
             df_past = df_p_dates[df_p_dates['Date_DT'] <= target_dt]
             if not df_past.empty:
                 row_ref = df_past.iloc[-1]
             else:
-                row_ref = df_p_dates.iloc[0]
+                row_ref = df_p_dates.iloc[0] 
                 
             val_ref_strat = extraire_nombre(row_ref["Actifs Stratégiques"])
             delta = val_invest - val_ref_strat
@@ -975,7 +977,6 @@ elif page_choisie == "📈 Performance":
         df_y['TWR_mult_prev'] = df_y['TWR_mult'].shift(1).fillna(1.0)
         df_y['Performance brute (%)'] = ((df_y['TWR_mult'] / df_y['TWR_mult_prev']) - 1) * 100
 
-        # --- ANNUALISATION DE L'ANNÉE DE LANCEMENT ---
         date_debut_absolue = df_viz['Date_DT'].min()
         annee_debut_absolue = date_debut_absolue.year
         
@@ -1019,7 +1020,6 @@ elif page_choisie == "📈 Performance":
         df_display.rename(columns={'Actifs Stratégiques': 'Valeur Bilan ($)'}, inplace=True)
         df_display['Année'] = df_display['Année'].astype(str)
 
-        # On nettoie drastiquement l'index pour Streamlit
         df_sorted = df_display.sort_values(by='Année', ascending=False).reset_index(drop=True)
 
         st.dataframe(
@@ -1067,7 +1067,6 @@ elif page_choisie == "🌴 Retraite":
         df_years['TWR_mult_prev'] = df_years['TWR_mult'].shift(1).fillna(1.0)
         df_years['Performance brute (%)'] = ((df_years['TWR_mult'] / df_years['TWR_mult_prev']) - 1) * 100
         
-        # --- ANNUALISATION AUSSI POUR LE SIMULATEUR ---
         date_debut_absolue = df_viz['Date_DT'].min()
         annee_debut_absolue = date_debut_absolue.year
         jours_annee_1 = (df_viz[df_viz['Année'] == annee_debut_absolue]['Date_DT'].max() - date_debut_absolue).days
@@ -1103,6 +1102,7 @@ elif page_choisie == "🌴 Retraite":
             "Apport mensuel d'aujourd'hui ($) ✍️", 
             min_value=0.00, 
             step=50.00, 
+            value=float(st.session_state.config.get("retraite_apport_mensuel", 250.0)),
             key="retraite_apport_input", 
             on_change=on_retraite_params_change
         )
@@ -1116,6 +1116,7 @@ elif page_choisie == "🌴 Retraite":
             min_value=0.00, 
             max_value=60.00, 
             step=0.10, 
+            value=float(st.session_state.config.get("retraite_taxe", 30.0)),
             key="retraite_taxe_input", 
             on_change=on_retraite_params_change
         )
@@ -1175,60 +1176,149 @@ elif page_choisie == "🌴 Retraite":
         st.plotly_chart(fig, use_container_width=True)
 
 elif page_choisie == "🏛️ Fiscalité":
-    st.title("🏛️ Simulateur Fiscal & Déclaration")
-    st.write("Cet outil vous aide à choisir la meilleure option d'imposition pour vos plus-values boursières (Flat Tax ou Barème) et vous indique précisément les formulaires et cases à remplir sur votre déclaration d'impôts française.")
+    st.title("🏛️ Simulateur Fiscal & Déclaration 2074")
+    st.write("Cet outil calcule vos plus-values de l'année selon la règle du **PRU** (stratégie d'achats réguliers), choisit la meilleure imposition, et vous donne les lignes exactes à recopier sur vos impôts.")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("👤 Ma Situation")
+    st.subheader("👤 1. Ma Situation Familiale")
+    c_sit1, c_sit2 = st.columns(2)
+    with c_sit1:
         statut = st.radio("Situation matrimoniale ✍️", ["Célibataire / Divorcé(e) / Veuf(ve)", "Marié(e) / Pacsé(e)"])
         enfants = st.number_input("Nombre d'enfants à charge ✍️", min_value=0, max_value=10, value=0, step=1)
-        
+    with c_sit2:
         salaire_1 = st.number_input("Vos revenus nets imposables (Salaires, etc.) en € ✍️", min_value=0.0, value=30000.0, step=1000.0)
-        
         salaire_2 = 0.0
         if "Marié" in statut:
             salaire_2 = st.number_input("Revenus nets imposables de votre conjoint(e) en € ✍️", min_value=0.0, value=30000.0, step=1000.0)
-            
         salaire_total = salaire_1 + salaire_2
-
-    with col2:
-        st.subheader("📈 Mon Bilan Boursier de l'année")
-        st.info("💡 Assurez-vous de convertir vos montants en **Euros**.")
-        plus_values = st.number_input("Total des Plus-Values encaissées (€) ✍️", min_value=0.0, value=0.0, step=100.0)
-        moins_values = st.number_input("Total des Moins-Values actées (€) ✍️", min_value=0.0, value=0.0, step=100.0)
 
     st.divider()
 
-    # --- CALCUL DU QUOTIENT FAMILIAL ---
+    st.subheader("📝 2. Mon Brouillon de Formulaire 2074 (Cessions par Actif)")
+    st.write("Le formulaire 2074 de l'administration exige que vous déclariez vos ventes **actif par actif**. Naviguez dans les onglets ci-dessous pour chaque ETF ou action que vous avez vendu dans l'année.")
+
+    # 1. Lister les actifs existants
+    actifs_portefeuille = st.session_state.donnees["Ticker"].dropna().unique().tolist()
+    actifs_cessions = st.session_state.cessions["Actif"].dropna().unique().tolist()
+    tous_actifs = sorted(list(set(actifs_portefeuille + actifs_cessions)))
+    tous_actifs = [a for a in tous_actifs if str(a).strip() != "" and str(a).upper() != "NAN"]
+
+    # 2. Permettre d'ajouter un nouvel actif manuellement si besoin
+    col_add1, col_add2 = st.columns([2, 1])
+    with col_add1:
+        nouvel_actif = st.text_input("➕ Ajouter un actif vendu qui ne serait pas dans la liste ci-dessous (ex: AAPL, CW8...) :", key="new_actif_input")
+    with col_add2:
+        st.write("")
+        st.write("")
+        if st.button("Ajouter l'onglet"):
+            if nouvel_actif and nouvel_actif not in tous_actifs:
+                nouvelle_ligne = pd.DataFrame([{"Actif": nouvel_actif, "Date de vente": "", "Quantité vendue": 0.0, "PRU (€)": 0.0, "Prix de revente total net (€)": 0.0, "Résultat (€)": 0.0}])
+                st.session_state.cessions = pd.concat([st.session_state.cessions, nouvelle_ligne], ignore_index=True)
+                st.rerun()
+
+    # Recharger la liste après un éventuel ajout
+    tous_actifs = sorted(list(set(st.session_state.donnees["Ticker"].dropna().unique().tolist() + st.session_state.cessions["Actif"].dropna().unique().tolist())))
+    tous_actifs = [a for a in tous_actifs if str(a).strip() != "" and str(a).upper() != "NAN"]
+
+    nouveau_df_cessions = pd.DataFrame()
+    plus_values = 0.0
+    moins_values = 0.0
+
+    if not tous_actifs:
+        st.info("Aucun actif trouvé dans votre portefeuille ou historique.")
+    else:
+        onglets = st.tabs(tous_actifs)
+        
+        for i, actif in enumerate(tous_actifs):
+            with onglets[i]:
+                st.markdown(f"**Lignes de ventes pour l'actif : {actif}**")
+                
+                df_actif = st.session_state.cessions[st.session_state.cessions["Actif"] == actif].copy()
+                if df_actif.empty:
+                    df_actif = pd.DataFrame(columns=["Actif", "Date de vente", "Quantité vendue", "PRU (€)", "Prix de revente total net (€)", "Résultat (€)"])
+                
+                df_actif_display = df_actif[["Date de vente", "Quantité vendue", "PRU (€)", "Prix de revente total net (€)", "Résultat (€)"]]
+                
+                edited = st.data_editor(
+                    df_actif_display,
+                    key=f"editor_{actif}",
+                    column_config={
+                        "Date de vente": st.column_config.TextColumn("Date de vente ✍️"),
+                        "Quantité vendue": st.column_config.NumberColumn("Quantité vendue ✍️"),
+                        "PRU (€)": st.column_config.NumberColumn("PRU (Prix Moyen d'achat) en € ✍️", format="%.2f €"),
+                        "Prix de revente total net (€)": st.column_config.NumberColumn("Prix de revente net (€) ✍️", format="%.2f €"),
+                        "Résultat (€)": st.column_config.NumberColumn("Résultat (€) 🔒", disabled=True, format="%.2f €")
+                    },
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                edited["Quantité vendue"] = pd.to_numeric(edited["Quantité vendue"], errors='coerce').fillna(0.0)
+                edited["PRU (€)"] = pd.to_numeric(edited["PRU (€)"], errors='coerce').fillna(0.0)
+                edited["Prix de revente total net (€)"] = pd.to_numeric(edited["Prix de revente total net (€)"], errors='coerce').fillna(0.0)
+                edited["Résultat (€)"] = edited["Prix de revente total net (€)"] - (edited["Quantité vendue"] * edited["PRU (€)"])
+                
+                # Nettoyage des lignes vides inutiles
+                mask = (edited["Quantité vendue"] != 0) | (edited["Prix de revente total net (€)"] != 0) | (edited["Date de vente"].astype(str).str.strip() != "")
+                edited = edited[mask]
+                
+                res_actif = edited["Résultat (€)"].sum()
+                color_res = "green" if res_actif >= 0 else "red"
+                st.markdown(f"*Bilan de l'année pour **{actif}** : <strong style='color:{color_res}'>{res_actif:+.2f} €</strong>*", unsafe_allow_html=True)
+                
+                edited["Actif"] = actif
+                nouveau_df_cessions = pd.concat([nouveau_df_cessions, edited], ignore_index=True)
+                
+        if not nouveau_df_cessions.empty:
+            nouveau_df_cessions = nouveau_df_cessions[["Actif", "Date de vente", "Quantité vendue", "PRU (€)", "Prix de revente total net (€)", "Résultat (€)"]]
+            
+        df_old = st.session_state.cessions.reset_index(drop=True)
+        df_new = nouveau_df_cessions.reset_index(drop=True)
+        
+        if not df_old.equals(df_new):
+            st.session_state.cessions = df_new
+            try: save_sheet("Cessions", st.session_state.cessions)
+            except: pass
+            st.rerun()
+
+        # Sommes globales
+        if not nouveau_df_cessions.empty:
+            plus_values = nouveau_df_cessions[nouveau_df_cessions["Résultat (€)"] > 0]["Résultat (€)"].sum()
+            moins_values = abs(nouveau_df_cessions[nouveau_df_cessions["Résultat (€)"] < 0]["Résultat (€)"].sum())
+
+    bilan_net = plus_values - moins_values
+
+    c_tot1, c_tot2, c_tot3 = st.columns(3)
+    c_tot1.metric("Total Plus-Values (Ligne 905)", f"{plus_values:,.2f} €")
+    c_tot2.metric("Total Moins-Values (Ligne 913)", f"{moins_values:,.2f} €")
+    c_tot3.metric("Bilan Net de l'année", f"{bilan_net:,.2f} €", delta=f"{bilan_net:,.2f} €", delta_color="normal" if bilan_net>=0 else "inverse")
+
+    st.divider()
+
     parts = 1.0 if "Célibataire" in statut else 2.0
     if enfants == 1: parts += 0.5
     elif enfants == 2: parts += 1.0
     elif enfants >= 3: parts += 1.0 + (enfants - 2)
 
-    # Abattement de 10% sur les salaires pour le foyer fiscal global
     revenu_base = salaire_total * 0.9
     qf_base = revenu_base / parts
 
-    # TMI Brackets (Barème Standard France)
     if qf_base <= 11294: tmi = 0
     elif qf_base <= 28797: tmi = 11
     elif qf_base <= 82341: tmi = 30
     elif qf_base <= 177106: tmi = 41
     else: tmi = 45
 
-    bilan_net = plus_values - moins_values
+    st.subheader("💡 3. Recommandation d'imposition")
 
-    st.subheader("💡 Recommandation d'imposition")
-
-    if bilan_net <= 0:
+    if bilan_net <= 0 and plus_values == 0 and moins_values == 0:
+        st.info("ℹ️ **Aucune transaction :** Vous n'avez pas enregistré de vente d'actif. Aucun impôt sur les plus-values n'est dû.")
+        choix = "Aucun"
+    elif bilan_net <= 0:
         st.success("✅ **Bilan Négatif ou Nul :** Vous n'avez pas d'impôts à payer sur vos cessions boursières cette année. Vos moins-values sont reportables pendant 10 ans.")
         choix = "Aucun (Bilan négatif)"
     else:
-        # PFU = 12.8% IR + 17.2% PS = 30%
-        # Barème = TMI + 17.2% PS
         taux_bareme_total = tmi + 17.2
-        
         if tmi < 12.8:
             st.success("✅ **Le Barème Progressif est plus avantageux pour vous !**")
             st.write(f"Votre Taux Marginal d'Imposition (TMI) calculé pour votre Foyer Fiscal est de **{tmi} %**. En choisissant le barème, vous paierez {tmi} % d'Impôt sur le Revenu + 17.2 % de Prélèvements Sociaux (soit **{taux_bareme_total} %** au total), ce qui est inférieur aux 30 % de la Flat Tax.")
@@ -1239,36 +1329,35 @@ elif page_choisie == "🏛️ Fiscalité":
             choix = "PFU"
 
     st.divider()
-    st.subheader("📝 Comment remplir votre déclaration d'impôts")
-    st.caption("⚠️ *Avertissement : Ce simulateur est une aide indicative. Assurez-vous de vérifier ces informations, notamment lors de votre toute première déclaration d'un compte étranger.*")
+    st.subheader("📝 4. Résumé pour votre déclaration d'impôts")
+    st.caption("⚠️ *Avertissement : Ce simulateur est une aide indicative pour vos investissements chez Swissquote. Vérifiez vos saisies lors de votre déclaration officielle.*")
     
     c_decl1, c_decl2 = st.columns(2)
     
     with c_decl1:
-        st.markdown("### 1. Déclaration du compte étranger")
-        st.markdown("Vous devez déclarer votre compte Swissquote chaque année via le **Formulaire 3916**.")
-        st.markdown("- **Case 8UU (sur la 2042) :** À cocher absolument.")
+        st.markdown("### 🔹 Formulaire 3916 (Comptes étrangers)")
+        st.markdown("Vous devez déclarer votre compte Swissquote chaque année.")
+        st.markdown("- **Case 8UU (sur la 2042) :** À cocher.")
         st.markdown("- **Informations à fournir sur le 3916 :**")
         st.markdown("  - *Intitulé :* Swissquote Bank SA")
         st.markdown("  - *Adresse :* Chemin de la Crétaux 33, 1196 Gland, Suisse")
         st.markdown("  - *Nature du compte :* Compte-titres ou espèces")
         
+        st.markdown("### 🔹 Formulaire 2074 (Détail des transactions)")
+        st.markdown("- Recopiez vos tableaux ci-dessus dans la **section 5** du formulaire 2074.")
+        if plus_values > 0: st.markdown(f"- **Ligne 905 :** {plus_values:,.0f} €")
+        if moins_values > 0: st.markdown(f"- **Ligne 913 :** {moins_values:,.0f} €")
+        
     with c_decl2:
-        st.markdown("### 2. Formulaire 2074 (Obligatoire)")
-        st.markdown("N'ayant pas de courtier français, vous ne recevez pas de relevé IFU automatique. Vous avez donc **l'obligation** de détailler vos calculs de plus et moins-values sur le **formulaire annexe 2074**.")
-        st.markdown("- Vous y listez vos achats/reventes pour prouver votre calcul.")
-        st.markdown("- Le résultat final trouvé en bas de cette 2074 sera à reporter sur votre déclaration principale (voir ci-dessous).")
-
-    st.markdown("### 3. Report sur la Déclaration Principale (2042)")
-    
-    if bilan_net > 0:
-        st.markdown(f"- **Case 3VG** (Plus-values nettes) : Indiquer **{bilan_net:,.0f} €**")
-        if choix == "Barème":
-            st.markdown("- **Case 2OP** : **À cocher absolument** (Option globale pour l'imposition au barème).")
+        st.markdown("### 🔹 Déclaration Principale (Formulaire 2042)")
+        if bilan_net > 0:
+            st.markdown(f"- **Case 3VG** (Plus-values nettes) : Indiquer **{bilan_net:,.0f} €**")
+            if choix == "Barème":
+                st.markdown("- **Case 2OP** : **À cocher absolument** (Option globale pour l'imposition au barème).")
+            else:
+                st.markdown("- **Case 2OP** : **À laisser DÉCOCHÉE** (Pour bénéficier de la Flat Tax par défaut de 30%).")
+        elif bilan_net < 0:
+            st.markdown(f"- **Case 3VH** (Moins-values nettes) : Indiquer **{abs(bilan_net):,.0f} €**")
+            st.markdown("*(Cette moins-value sera conservée par l'administration pour annuler vos futurs impôts pendant 10 ans).*")
         else:
-            st.markdown("- **Case 2OP** : **À laisser DÉCOCHÉE** (Pour bénéficier de la Flat Tax par défaut de 30%).")
-    elif bilan_net < 0:
-        st.markdown(f"- **Case 3VH** (Moins-values nettes) : Indiquer **{abs(bilan_net):,.0f} €**")
-        st.markdown("*(L'administration fiscale mettra cette moins-value en réserve pour la déduire de vos éventuels gains au cours des 10 prochaines années).*")
-    else:
-        st.markdown("- **Rien à déclarer** en cases 3VG ou 3VH car votre bilan est de 0 €.")
+            st.markdown("- **Rien à déclarer** en cases 3VG ou 3VH car votre bilan net de l'année est de 0 €.")
