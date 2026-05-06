@@ -114,10 +114,6 @@ def nettoyer_dataframe(df):
     cols_finales = ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)"]
     for col in df.columns:
         if "quantit" in str(col).lower() or "qte" in str(col).lower(): df.rename(columns={col: "Quantité"}, inplace=True)
-            
-    # Remplacement automatique de l'ancienne catégorie Or-BTC par Crypto
-    if "Type" in df.columns:
-        df["Type"] = df["Type"].replace({"💰 Or-BTC": "₿ Crypto"})
 
     if "Type" not in df.columns:
         df["Type"] = ""
@@ -226,7 +222,6 @@ def actualiser_cours_internet(silencieux=False):
                 
                 # --- MOTEUR 1 : CRYPTO VIA BINANCE (Anti-Blocage) ---
                 if ticker_saisi.endswith("USDT"):
-                    # On tente Binance Global, puis Binance US pour contourner le blocage des serveurs américains Streamlit
                     for base_url in ["https://api.binance.com", "https://api.binance.us"]:
                         try:
                             url = f"{base_url}/api/v3/klines?symbol={ticker_saisi}&interval=1d&limit=2"
@@ -254,7 +249,6 @@ def actualiser_cours_internet(silencieux=False):
                         continue # La crypto a été mise à jour avec succès, on passe à l'actif suivant du tableau
 
                 # --- MOTEUR 2 : ACTIONS & FOREX VIA YAHOO FINANCE ---
-                # Si l'actif n'est pas une crypto, OU si Binance a totalement échoué :
                 ticker_yf = ticker_saisi.replace("USDT", "-USD") if (ticker_saisi.endswith("USDT") and not success_binance) else ticker_saisi
                 
                 try:
@@ -531,6 +525,8 @@ if page_choisie == "📊 Tableau de bord":
                 fig_line_tg.update_traces(line_shape='spline')
                 fig_line_tg.update_layout(xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0))
                 fig_line_tg.update_yaxes(zeroline=False, rangemode="normal")
+                # Format des dates en Jour/Mois/Année (Axe X et Bulle d'information)
+                fig_line_tg.update_xaxes(tickformat="%d/%m/%Y", hoverformat="%d/%m/%Y")
                 st.plotly_chart(fig_line_tg, use_container_width=True)
 
         st.write("")
@@ -549,7 +545,7 @@ if page_choisie == "📊 Tableau de bord":
                 st.plotly_chart(fig_tg, use_container_width=True)
                 
     else:
-        st.info("Aucune donnée disponible pour l'analyse globale. Figez d'abord une situation dans l'onglet '🏖️ Suivi'.")
+        st.info("Aucune donnée disponible pour l'analyse globale. Le premier point sera enregistré cette nuit.")
 
     st.divider()
 
@@ -568,7 +564,7 @@ if page_choisie == "📊 Tableau de bord":
     st.write("") 
     
     if df_p.empty: 
-        st.info("Aucune donnée disponible pour l'analyse. Figez d'abord une situation dans l'onglet '🏖️ Suivi'.")
+        st.info("Aucune donnée disponible pour l'analyse. Le premier point sera enregistré cette nuit.")
     else:
         df_viz = df_p_live.copy()
         df_viz['Date_DT'] = pd.to_datetime(df_viz['Date'], dayfirst=True, errors='coerce')
@@ -617,6 +613,8 @@ if page_choisie == "📊 Tableau de bord":
                 fig_line.update_traces(line_shape='spline')
                 fig_line.update_layout(xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0))
                 fig_line.update_yaxes(zeroline=False, rangemode="normal")
+                # Format des dates en Jour/Mois/Année (Axe X et Bulle d'information)
+                fig_line.update_xaxes(tickformat="%d/%m/%Y", hoverformat="%d/%m/%Y")
                 st.plotly_chart(fig_line, use_container_width=True)
 
     st.write("")
@@ -853,17 +851,8 @@ elif page_choisie == "💰 Fonds":
 
 elif page_choisie == "🏖️ Suivi":
     st.title("🏖️ Suivi & Évolution")
-    st.write("Ce tableau enregistre vos points de passage. **En cas d'erreur de clic sur le bouton MAJ, vous pouvez modifier les 4 premières colonnes manuellement (✍️).** Les autres (🔒) se recalculeront automatiquement.")
+    st.write("Ce tableau enregistre vos points de passage. **Votre robot automatique enregistre une nouvelle ligne chaque nuit.** Vous pouvez modifier les 4 premières colonnes manuellement (✍️) en cas d'erreur. Les autres (🔒) se recalculeront automatiquement.")
     
-    if st.button("📸 MAJ Graphiques", use_container_width=True, type="primary"):
-        cap = sum(row["Montant $"] if "ajout" in row["Type"].lower() else -row["Montant $"] for _, row in st.session_state.historique.iterrows())
-        act = sum(extraire_nombre(r["Valeur totale"]) for _, r in st.session_state.donnees.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
-        epg = sum(extraire_nombre(r["Valeur totale"]) for _, r in st.session_state.donnees.iterrows())
-        nl = {"Date": datetime.datetime.now().strftime("%d/%m/%Y"), "Capital investi": cap, "Actifs Stratégiques": act, "Total Global": epg}
-        st.session_state.projections = recalculer_toute_la_base_projections(pd.concat([st.session_state.projections, pd.DataFrame([nl])], ignore_index=True))
-        save_sheet("Projections", st.session_state.projections)
-        st.rerun()
-
     if not st.session_state.projections.empty:
         df_v = st.session_state.projections.copy()
         df_v['DT'] = pd.to_datetime(df_v['Date'], dayfirst=True, errors='coerce')
@@ -894,7 +883,7 @@ elif page_choisie == "📈 Performance":
     st.title("📈 Performances Annuelles & Inflation")
     df_p = st.session_state.projections
 
-    if df_p.empty: st.info("Aucune donnée disponible. Figez d'abord une situation dans l'onglet '🏖️ Suivi'.")
+    if df_p.empty: st.info("Aucune donnée disponible. Le premier point sera enregistré cette nuit.")
     else:
         try: or_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
         except: or_px = 2000.0
