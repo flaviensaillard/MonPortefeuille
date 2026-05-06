@@ -254,8 +254,7 @@ def actualiser_cours_internet(silencieux=False):
                         continue # La crypto a été mise à jour avec succès, on passe à l'actif suivant du tableau
 
                 # --- MOTEUR 2 : ACTIONS & FOREX VIA YAHOO FINANCE ---
-                # Si l'actif n'est pas une crypto, OU si Binance a totalement échoué :
-                # On traduit "BTCUSDT" en "BTC-USD" pour que Yahoo le comprenne.
+                # Si l'actif n'est pas une crypto, OU si Binance a totally échoué :
                 ticker_yf = ticker_saisi.replace("USDT", "-USD") if (ticker_saisi.endswith("USDT") and not success_binance) else ticker_saisi
                 
                 try:
@@ -411,17 +410,32 @@ if page_choisie == "📊 Tableau de bord":
     pct_jour_total_global = (var_jour_total_global_usd / val_total_veille * 100) if val_total_veille > 0 else 0.0
     pct_jour_total = (var_jour_total_usd / val_invest_veille * 100) if val_invest_veille > 0 else 0.0
     
+    # --- CALCUL DELTA 30 JOURS (ou mois en cours) ---
     delta = pct_delta = 0.0
     delta_tg = pct_delta_tg = 0.0
     
     if not df_p.empty:
-        derniere_val = extraire_nombre(df_p.iloc[-1]["Actifs Stratégiques"])
-        delta = val_invest - derniere_val
-        if derniere_val > 0: pct_delta = (delta / derniere_val) * 100
+        df_p_dates = df_p.copy()
+        df_p_dates['Date_DT'] = pd.to_datetime(df_p_dates['Date'], dayfirst=True, errors='coerce')
+        df_p_dates = df_p_dates.dropna(subset=['Date_DT']).sort_values('Date_DT')
+        
+        if not df_p_dates.empty:
+            now_dt = pd.Timestamp.now()
+            target_dt = now_dt - pd.DateOffset(days=30) # On remonte à 30 jours
             
-        derniere_val_tg = extraire_nombre(df_p.iloc[-1]["Total Global"])
-        delta_tg = val_total - derniere_val_tg
-        if derniere_val_tg > 0: pct_delta_tg = (delta_tg / derniere_val_tg) * 100
+            df_past = df_p_dates[df_p_dates['Date_DT'] <= target_dt]
+            if not df_past.empty:
+                row_ref = df_past.iloc[-1]
+            else:
+                row_ref = df_p_dates.iloc[0] # Si on a moins de 30j d'historique, on prend le tout premier point
+                
+            val_ref_strat = extraire_nombre(row_ref["Actifs Stratégiques"])
+            delta = val_invest - val_ref_strat
+            if val_ref_strat > 0: pct_delta = (delta / val_ref_strat) * 100
+            
+            val_ref_tg = extraire_nombre(row_ref["Total Global"])
+            delta_tg = val_total - val_ref_tg
+            if val_ref_tg > 0: pct_delta_tg = (delta_tg / val_ref_tg) * 100
 
     besoin_reequilibrage = False
     if val_invest > 0:
@@ -462,7 +476,7 @@ if page_choisie == "📊 Tableau de bord":
     col_tg_met, col_tg_vide = st.columns(2)
     
     with col_tg_met:
-        afficher_montant_double("Total Global", val_total, f"{delta_tg:+,.2f} $ ({pct_delta_tg:+.2f} % depuis le dernier pointage)")
+        afficher_montant_double("Total Global", val_total, f"{delta_tg:+,.2f} $ ({pct_delta_tg:+.2f} % sur les 30 derniers jours)")
         color_jour_tg = "#2ecc71" if var_jour_total_global_usd >= 0 else "#e74c3c"
         symbole_jour_tg = "📈" if var_jour_total_global_usd >= 0 else "📉"
         st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour_tg} Aujourd'hui : <strong style='color:{color_jour_tg}'>{var_jour_total_global_usd:+,.2f} $ ({pct_jour_total_global:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
@@ -546,7 +560,7 @@ if page_choisie == "📊 Tableau de bord":
     
     col_strat_met, col_strat_vide = st.columns(2)
     with col_strat_met:
-        afficher_montant_double("Actifs Stratégiques", val_invest, f"{delta:+,.2f} $ ({pct_delta:+.2f} % depuis le dernier pointage)")
+        afficher_montant_double("Actifs Stratégiques", val_invest, f"{delta:+,.2f} $ ({pct_delta:+.2f} % sur les 30 derniers jours)")
         color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
         symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
         st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
