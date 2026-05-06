@@ -658,11 +658,46 @@ elif page_choisie == "📋 Liste des actifs":
     val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
     somme_p = sum(extraire_nombre(r["Pourcentage (%)"]) for _, r in df_actuel.iterrows())
 
+    # --- CALCUL VARIATIONS JOUR ---
+    def parse_var_jour(ticker):
+        var_str = st.session_state.variations.get(ticker, "0")
+        match = re.search(r'([+-]?\d+\.?\d*)', var_str)
+        return float(match.group(1)) if match else 0.0
+
+    var_jour_total_global_usd = 0.0
+    val_total_veille = 0.0
+    var_jour_total_usd = 0.0
+    val_invest_veille = 0.0
+    
+    for _, r in df_actuel.iterrows():
+        tick = str(r.get("Ticker", "")).strip().upper()
+        v_actuelle = extraire_nombre(r["Valeur totale"])
+        v_pct = parse_var_jour(tick)
+        v_veille = v_actuelle / (1 + v_pct / 100) if (1 + v_pct / 100) != 0 else v_actuelle
+        
+        var_jour_total_global_usd += (v_actuelle - v_veille)
+        val_total_veille += v_veille
+        
+        if extraire_nombre(r["Pourcentage (%)"]) > 0:
+            var_jour_total_usd += (v_actuelle - v_veille)
+            val_invest_veille += v_veille
+            
+    pct_jour_total_global = (var_jour_total_global_usd / val_total_veille * 100) if val_total_veille > 0 else 0.0
+    pct_jour_total = (var_jour_total_usd / val_invest_veille * 100) if val_invest_veille > 0 else 0.0
+    # ------------------------------
+
     c1, c2, c3 = st.columns(3)
     with c1:
         afficher_montant_double("Actifs Stratégiques", val_invest)
+        color_jour = "#2ecc71" if var_jour_total_usd >= 0 else "#e74c3c"
+        symbole_jour = "📈" if var_jour_total_usd >= 0 else "📉"
+        st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour} Aujourd'hui : <strong style='color:{color_jour}'>{var_jour_total_usd:+,.2f} $ ({pct_jour_total:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
+        
     with c2:
         afficher_montant_double("Total Global", val_total)
+        color_jour_tg = "#2ecc71" if var_jour_total_global_usd >= 0 else "#e74c3c"
+        symbole_jour_tg = "📈" if var_jour_total_global_usd >= 0 else "📉"
+        st.markdown(f"<div style='margin-top: -0.5rem; margin-bottom: 1rem;'><span style='font-size: 1.1em;'>{symbole_jour_tg} Aujourd'hui : <strong style='color:{color_jour_tg}'>{var_jour_total_global_usd:+,.2f} $ ({pct_jour_total_global:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
     
     c3.metric("Répartition Cible", f"{round(somme_p, 2):.2f}%", f"{round(100 - somme_p, 2):.2f}% restant", delta_color="inverse" if somme_p > 100 else "normal")
 
@@ -733,7 +768,7 @@ elif page_choisie == "⚖️ Rééquilibrage":
             
             pct_reel = (val_act / new_base) * 100
             
-            qte_fmt = f"{abs(round(qte, 6)):.6f}" if "BTC" in tick else f"{abs(int(round(qte)))}"
+            qte_fmt = f"{abs(round(qte, 6)):.6f}" if "BTC" in tick or "USDT" in tick else f"{abs(int(round(qte)))}"
             signe = "+ " if qte > 0.000001 else "- " if qte < -0.000001 else ""
             
             if abs(diff) < 1000 or abs(pct_reel - (pct_cib * 100)) < 2.0: 
