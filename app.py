@@ -942,11 +942,15 @@ elif page_choisie == "📈 Performance":
         df_viz['Année'] = df_viz['Date_DT'].dt.year
 
         df_y = df_viz.groupby('Année').last().reset_index()
+        df_y['Année'] = df_y['Année'].astype(int)
+        
         df_y['TWR_mult'] = 1 + (df_y['Score TWR %'] / 100)
         df_y['TWR_mult_prev'] = df_y['TWR_mult'].shift(1).fillna(1.0)
         df_y['Performance brute (%)'] = ((df_y['TWR_mult'] / df_y['TWR_mult_prev']) - 1) * 100
 
+        st.session_state.inflation['Année'] = st.session_state.inflation['Année'].astype(int)
         df_y = df_y.merge(st.session_state.inflation, on='Année', how='left').fillna({'Inflation (%)': 0.0})
+        
         df_y['Performance nette (%)'] = (((1 + df_y['Performance brute (%)'] / 100) / (1 + df_y['Inflation (%)'] / 100)) - 1) * 100
         df_y['Gains Nets ($)'] = df_y['Evolution cumulée $'] - df_y['Evolution cumulée $'].shift(1).fillna(0)
         df_y['Valeur Bilan (Or)'] = df_y['Actifs Stratégiques'] / or_px
@@ -967,12 +971,14 @@ elif page_choisie == "📈 Performance":
         
         st.write("Ce tableau récapitule vos résultats par année civile. L'inflation officielle est **récupérée et mise à jour automatiquement** depuis la Banque Mondiale. Pour l'année en cours, **double-cliquez sur la colonne 'Inflation ✍️'** pour y saisir votre estimation provisoire.")
         
-        df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Actifs Stratégiques', 'Valeur Bilan (Or)']].copy()
-        df_display.columns = ['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Valeur Bilan ($)', 'Valeur Bilan (Or)']
+        df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Valeur Bilan ($)', 'Valeur Bilan (Or)']].copy()
         df_display['Année'] = df_display['Année'].astype(str)
 
+        # On nettoie drastiquement l'index pour Streamlit
+        df_sorted = df_display.sort_values(by='Année', ascending=False).reset_index(drop=True)
+
         edited_df = st.data_editor(
-            df_display.sort_values(by='Année', ascending=False),
+            df_sorted,
             column_config={
                 "Année": st.column_config.TextColumn("Année 🔒", disabled=True),
                 "Performance brute (%)": st.column_config.NumberColumn("Perf. Brute (%) 🔒", format="%.2f %%", disabled=True),
@@ -985,7 +991,7 @@ elif page_choisie == "📈 Performance":
             hide_index=True, use_container_width=True
         )
 
-        if not edited_df['Inflation (%)'].equals(df_display.sort_values(by='Année', ascending=False)['Inflation (%)']):
+        if not edited_df['Inflation (%)'].equals(df_sorted['Inflation (%)']):
             nouveau_df_inflation = edited_df[['Année', 'Inflation (%)']].copy()
             nouveau_df_inflation['Année'] = nouveau_df_inflation['Année'].astype(int)
             st.session_state.inflation = nouveau_df_inflation
