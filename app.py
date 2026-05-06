@@ -793,7 +793,7 @@ elif page_choisie == "⚖️ Rééquilibrage":
             signe = "+ " if qte > 0.000001 else "- " if qte < -0.000001 else ""
             
             if abs(diff) < 1000 or abs(pct_reel - (pct_cib * 100)) < 2.0: 
-                action, qte_str = "✅ ÉQUILIBRÉ", f"({signe}{qte_fmt})"
+                action, qte_str = f"✅ ÉQUILIBRÉ ($ {abs(diff):,.2f})", f"({signe}{qte_fmt})"
             else: 
                 action, qte_str = f"{'🟢 ACHETER' if diff > 0 else '🔴 VENDRE'} $ {abs(diff):,.2f}", f"{signe}{qte_fmt}"
             
