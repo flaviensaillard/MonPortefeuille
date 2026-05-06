@@ -948,6 +948,19 @@ elif page_choisie == "📈 Performance":
         df_y['TWR_mult_prev'] = df_y['TWR_mult'].shift(1).fillna(1.0)
         df_y['Performance brute (%)'] = ((df_y['TWR_mult'] / df_y['TWR_mult_prev']) - 1) * 100
 
+        # --- ANNUALISATION DE L'ANNÉE DE LANCEMENT ---
+        date_debut_absolue = df_viz['Date_DT'].min()
+        annee_debut_absolue = date_debut_absolue.year
+        
+        jours_annee_1 = (df_viz[df_viz['Année'] == annee_debut_absolue]['Date_DT'].max() - date_debut_absolue).days
+        
+        if jours_annee_1 > 0 and jours_annee_1 < 330:
+            idx = df_y[df_y['Année'] == annee_debut_absolue].index
+            if not idx.empty:
+                perf_abs = df_y.loc[idx, 'Performance brute (%)'].values[0] / 100.0
+                perf_ann = ((1 + perf_abs) ** (365.25 / jours_annee_1)) - 1
+                df_y.loc[idx, 'Performance brute (%)'] = perf_ann * 100.0
+
         st.session_state.inflation['Année'] = st.session_state.inflation['Année'].astype(int)
         df_y = df_y.merge(st.session_state.inflation, on='Année', how='left').fillna({'Inflation (%)': 0.0})
         
@@ -956,30 +969,19 @@ elif page_choisie == "📈 Performance":
         df_y['Valeur Bilan (Or)'] = df_y['Actifs Stratégiques'] / or_px
         
         df_hist = df_y[df_y['Année'] < datetime.datetime.now().year].copy()
-        
-        # --- GESTION DE L'ANNÉE PARTIELLE DE DÉBUT ---
-        date_debut_absolue = df_viz['Date_DT'].min()
-        annee_debut_absolue = date_debut_absolue.year
-        
-        if date_debut_absolue.month > 1:
-            df_pour_moyenne = df_hist[df_hist['Année'] > annee_debut_absolue]
-            msg_partielle = f"*(L'année de lancement {annee_debut_absolue} est exclue des moyennes car elle a débuté en cours d'année)*"
-        else:
-            df_pour_moyenne = df_hist
-            msg_partielle = ""
             
         st.subheader("📊 Moyennes Historiques (Hors année en cours)")
-        if msg_partielle:
-            st.markdown(f"<span style='font-size: 0.9em; opacity: 0.7;'>{msg_partielle}</span>", unsafe_allow_html=True)
-            st.write("")
+        if jours_annee_1 > 0 and jours_annee_1 < 330:
+            msg_annualisation = f"💡 **Note :** Votre année de lancement ({annee_debut_absolue}) ayant duré moins d'un an, son pourcentage de rentabilité a été **annualisé** (projeté mathématiquement sur un rythme de 12 mois complets). Cela permet de l'intégrer à vos moyennes et de la comparer à l'inflation."
+            st.info(msg_annualisation)
         
-        if not df_pour_moyenne.empty:
+        if not df_hist.empty:
             c_m1, c_m2, c_m3, c_m4 = st.columns(4)
-            c_m1.metric("Moyenne Perf. Brute", f"{df_pour_moyenne['Performance brute (%)'].mean():+.2f} %")
-            c_m2.metric("Moyenne Inflation", f"{df_pour_moyenne['Inflation (%)'].mean():.2f} %")
-            c_m3.metric("Moyenne Perf. Nette", f"{df_pour_moyenne['Performance nette (%)'].mean():+.2f} %")
+            c_m1.metric("Moyenne Perf. Brute", f"{df_hist['Performance brute (%)'].mean():+.2f} %")
+            c_m2.metric("Moyenne Inflation", f"{df_hist['Inflation (%)'].mean():.2f} %")
+            c_m3.metric("Moyenne Perf. Nette", f"{df_hist['Performance nette (%)'].mean():+.2f} %")
             with c_m4:
-                afficher_montant_double("Moyenne Gains / An", df_pour_moyenne['Gains Nets ($)'].mean(), taille="medium")
+                afficher_montant_double("Moyenne Gains / An", df_hist['Gains Nets ($)'].mean(), taille="medium")
         else: st.info("L'historique complet est insuffisant pour calculer une moyenne.")
         
         st.divider()
@@ -1007,9 +1009,9 @@ elif page_choisie == "📈 Performance":
             hide_index=True, use_container_width=True
         )
 
-        # Comparaison robuste des valeurs (contourne le bug des types float/int de Streamlit)
-        edited_infl_vals = edited_df['Inflation (%)'].astype(float)
-        original_infl_vals = df_sorted['Inflation (%)'].astype(float)
+        # Comparaison robuste des valeurs en convertissant tout en "float"
+        edited_infl_vals = pd.to_numeric(edited_df['Inflation (%)'], errors='coerce')
+        original_infl_vals = pd.to_numeric(df_sorted['Inflation (%)'], errors='coerce')
 
         if not (edited_infl_vals == original_infl_vals).all():
             nouveau_df_inflation = edited_df[['Année', 'Inflation (%)']].copy()
@@ -1049,15 +1051,19 @@ elif page_choisie == "🌴 Retraite":
         df_years['TWR_mult_prev'] = df_years['TWR_mult'].shift(1).fillna(1.0)
         df_years['Performance brute (%)'] = ((df_years['TWR_mult'] / df_years['TWR_mult_prev']) - 1) * 100
         
-        # --- MÊME RÈGLE POUR LE SIMULATEUR : EXCLURE L'ANNÉE PARTIELLE ---
+        # --- ANNUALISATION AUSSI POUR LE SIMULATEUR ---
         date_debut_absolue = df_viz['Date_DT'].min()
         annee_debut_absolue = date_debut_absolue.year
+        jours_annee_1 = (df_viz[df_viz['Année'] == annee_debut_absolue]['Date_DT'].max() - date_debut_absolue).days
         
-        if date_debut_absolue.month > 1:
-            df_historique = df_years[(df_years['Année'] < annee_en_cours) & (df_years['Année'] > annee_debut_absolue)]
-        else:
-            df_historique = df_years[df_years['Année'] < annee_en_cours]
-            
+        if jours_annee_1 > 0 and jours_annee_1 < 330:
+            idx = df_years[df_years['Année'] == annee_debut_absolue].index
+            if not idx.empty:
+                perf_abs = df_years.loc[idx, 'Performance brute (%)'].values[0] / 100.0
+                perf_ann = ((1 + perf_abs) ** (365.25 / jours_annee_1)) - 1
+                df_years.loc[idx, 'Performance brute (%)'] = perf_ann * 100.0
+
+        df_historique = df_years[df_years['Année'] < annee_en_cours]
         if not df_historique.empty: moy_brute_hist = round(df_historique['Performance brute (%)'].mean(), 2)
 
     st.subheader("⚙️ Paramètres du Simulateur")
