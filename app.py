@@ -346,16 +346,15 @@ if "config" not in st.session_state:
         for _, row in df_config.iterrows():
             if pd.notna(row["Clé"]):
                 st.session_state.config[str(row["Clé"])] = extraire_nombre(row["Valeur"])
-    
-    # Création des clés par défaut si elles n'existent pas encore
-    if "apport_dispo" not in st.session_state.config:
-        st.session_state.config["apport_dispo"] = 0.0
-    if "retraite_apport_mensuel" not in st.session_state.config:
-        st.session_state.config["retraite_apport_mensuel"] = 250.0
-    if "retraite_taxe" not in st.session_state.config:
-        st.session_state.config["retraite_taxe"] = 30.0
 
-# Initialisation des variables avec la mémoire
+# --- VÉRIFICATION ET CRÉATION DES CLÉS MANQUANTES (Hors de la condition de chargement) ---
+if "apport_dispo" not in st.session_state.config:
+    st.session_state.config["apport_dispo"] = 0.0
+if "retraite_apport_mensuel" not in st.session_state.config:
+    st.session_state.config["retraite_apport_mensuel"] = 250.0
+if "retraite_taxe" not in st.session_state.config:
+    st.session_state.config["retraite_taxe"] = 30.0
+
 if "apport_dispo" not in st.session_state:
     st.session_state.apport_dispo = float(st.session_state.config["apport_dispo"])
 
@@ -653,7 +652,7 @@ if page_choisie == "📊 Tableau de bord":
         st.markdown("**📈 Évolution & Performance de la stratégie**")
         c_f1, c_f2 = st.columns(2)
         with c_f1: filtre = st.radio("Sélectionnez la période :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année"], horizontal=True, key="filtre_strat")
-        with c_f2: mode_graph = st.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=True, key="mode_strat")
+        with c_f2: mode_graph = radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=True, key="mode_strat")
             
         now = pd.Timestamp.now()
         
