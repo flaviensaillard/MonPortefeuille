@@ -65,8 +65,8 @@ def save_sheet(sheet_name, df):
     try:
         ws = sh.worksheet(sheet_name)
     except:
-        # Si l'onglet n'existe pas encore (ex: l'onglet "Config"), le logiciel le crée tout seul
-        ws = sh.add_worksheet(title=sheet_name, rows="100", cols="20")
+        # Création automatique de l'onglet s'il n'existe pas
+        ws = sh.add_worksheet(title=sheet_name, rows=100, cols=20)
     ws.clear()
     set_with_dataframe(ws, df, include_index=False)
 
@@ -338,7 +338,7 @@ def recuperer_inflation_france():
 # --- 5. CHARGEMENT INITIAL (DEPUIS LE CLOUD) ---
 if "variations" not in st.session_state: st.session_state.variations = {}
 
-# Chargement du nouvel onglet "Config" pour la mémoire persistante
+# Chargement de la configuration mémoire (Onglet "Config")
 if "config" not in st.session_state:
     df_config = load_sheet("Config", ["Clé", "Valeur"])
     st.session_state.config = {}
@@ -390,7 +390,6 @@ if "inflation_check_done" not in st.session_state:
             if not df_infl_temp[df_infl_temp['Année'] == a].empty:
                 val = df_infl_temp[df_infl_temp['Année'] == a].iloc[0]['Inflation (%)']
             
-            # Si la Banque Mondiale a une valeur pour cette année, elle écrase la tienne
             if a in dict_infl and dict_infl[a] != val:
                 val = dict_infl[a]
                 changement = True
@@ -845,25 +844,24 @@ elif page_choisie == "⚖️ Rééquilibrage":
         actualiser_cours_internet(silencieux=False)
         st.rerun()
         
-    def on_apport_change():
-        # Cette fonction s'active dès que tu valides ton chiffre. Elle le sauvegarde dans la base de données.
-        nouvel_apport = st.session_state.apport_input
-        st.session_state.apport_dispo = nouvel_apport
-        st.session_state.config["apport_dispo"] = nouvel_apport
-        df_conf = pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"])
-        save_sheet("Config", df_conf)
-
-    # Ré-injection de la valeur mémorisée dans le bouton quand on revient sur cet onglet
-    if "apport_input" not in st.session_state:
-        st.session_state.apport_input = float(st.session_state.apport_dispo)
-
+    # --- MÉTHODE BLINDÉE POUR CONSERVER L'APPORT ---
     cash_dispo = st.number_input(
         "💵 Nouvel apport à investir ($) ✍️", 
         min_value=0.00, 
         step=100.00, 
-        key="apport_input",
-        on_change=on_apport_change
+        value=float(st.session_state.apport_dispo) # Injection de la mémoire sans "key"
     )
+    
+    # Si le chiffre affiché est différent de la mémoire, on sauvegarde et on fige
+    if cash_dispo != st.session_state.apport_dispo:
+        st.session_state.apport_dispo = cash_dispo
+        st.session_state.config["apport_dispo"] = cash_dispo
+        df_conf = pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"])
+        try:
+            save_sheet("Config", df_conf)
+        except Exception:
+            pass # Si jamais l'API Google Sheets fait une micro-coupure, on ne plante pas le logiciel
+        st.rerun()
         
     st.divider()
     df = st.session_state.donnees
@@ -922,7 +920,7 @@ elif page_choisie == "💰 Fonds":
                 st.session_state.historique = pd.concat([df_h, pd.DataFrame([nl])], ignore_index=True)
                 save_sheet("Historique", st.session_state.historique)
                 
-                # Ajout automatique du fond propre dans l'Apport de l'onglet Rééquilibrage
+                # Mise à jour synchronisée de l'onglet Rééquilibrage
                 if t_m == "Ajout de fond propre": 
                     st.session_state.apport_dispo += m_usd
                     st.session_state.config["apport_dispo"] = st.session_state.apport_dispo
