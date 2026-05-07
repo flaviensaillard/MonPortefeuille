@@ -403,11 +403,12 @@ def recuperer_inflation_france():
                     avg_y = sum(yearly_indices[y]) / len(yearly_indices[y])
                     avg_prev_y = sum(yearly_indices[prev_y]) / len(yearly_indices[prev_y])
                     inflation = ((avg_y / avg_prev_y) - 1) * 100
-                    inflation_data[y] = round(inflation, 2)
-            if inflation_data: return inflation_data
+                    # Ne stocker que les données récentes (pour éviter d'écraser l'historique stable si l'INSEE a une base différente)
+                    if y >= 2024:
+                        inflation_data[y] = round(inflation, 2)
     except: pass
     
-    # 2. Source Secondaire : Banque Mondiale (Si INSEE inaccessible)
+    # 2. Source Secondaire : Banque Mondiale
     try:
         req = urllib.request.Request("https://api.worldbank.org/v2/country/FRA/indicator/FP.CPI.TOTL.ZG?format=json&per_page=20", headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -418,10 +419,9 @@ def recuperer_inflation_france():
                         year = int(i['date'])
                         if year not in inflation_data:
                             inflation_data[year] = round(float(i['value']), 2)
-        if inflation_data: return inflation_data
     except: pass
     
-    return None
+    return inflation_data if inflation_data else None
 
 def get_historical_fx(devise, date_val):
     d_clean = str(devise).upper().strip()
@@ -521,13 +521,6 @@ if "inflation" not in st.session_state:
         df_i.drop_duplicates(subset=['Année'], keep='last', inplace=True)
     st.session_state.inflation = df_i
 
-if "transactions" not in st.session_state:
-    df_t = load_sheet("Transaction", ["Ticker", "Type", "Date", "Quantité", "Cours", "Frais", "Montant Net", "Devise", "PRU (Devise)", "Taux change (EUR)"])
-    for c in ["Quantité", "Cours", "Frais", "Montant Net", "PRU (Devise)", "Taux change (EUR)"]:
-        if c in df_t.columns:
-            df_t[c] = df_t[c].apply(extraire_nombre)
-    st.session_state.transactions = df_t
-
 if "inflation_check_done" not in st.session_state:
     st.session_state.inflation_check_done = True
     d_inf = recuperer_inflation_france()
@@ -537,12 +530,21 @@ if "inflation_check_done" not in st.session_state:
         ans = df_p_tmp.dropna(subset=['Date_DT'])['Date_DT'].dt.year.unique()
         n_inf = []
         chg = False
+        
+        # On va chercher les valeurs actuelles pour les garder si elles sont bonnes
+        current_inf_dict = {}
+        if not st.session_state.inflation.empty:
+            for _, r in st.session_state.inflation.iterrows():
+                current_inf_dict[int(r['Année'])] = r['Inflation (%)']
+        
         for a in ans:
-            v_off = d_inf.get(a, 0.0)
-            if not st.session_state.inflation[st.session_state.inflation['Année'] == a].empty:
-                v_act = st.session_state.inflation[st.session_state.inflation['Année'] == a].iloc[0]['Inflation (%)']
+            # L'API dynamique a la priorité
+            if a in d_inf:
+                v_off = d_inf[a]
             else:
-                v_act = 0.0
+                v_off = current_inf_dict.get(a, 0.0)
+                
+            v_act = current_inf_dict.get(a, 0.0)
                 
             if v_off != v_act:
                 chg = True
@@ -551,6 +553,13 @@ if "inflation_check_done" not in st.session_state:
         if chg:
             st.session_state.inflation = pd.DataFrame(n_inf)
             save_sheet("Inflation", st.session_state.inflation)
+
+if "transactions" not in st.session_state:
+    df_t = load_sheet("Transaction", ["Ticker", "Type", "Date", "Quantité", "Cours", "Frais", "Montant Net", "Devise", "PRU (Devise)", "Taux change (EUR)"])
+    for c in ["Quantité", "Cours", "Frais", "Montant Net", "PRU (Devise)", "Taux change (EUR)"]:
+        if c in df_t.columns:
+            df_t[c] = df_t[c].apply(extraire_nombre)
+    st.session_state.transactions = df_t
 
 if "dernier_refresh_cours" not in st.session_state:
     st.session_state.dernier_refresh_cours = 0
@@ -1357,7 +1366,7 @@ elif page_choisie == "🏛️ Fiscalité":
             use_frais_2 = st.checkbox("Déclarer aux frais réels (Conjoint)", value=bool(int(st.session_state.config.get("f_u2", 0))), key="in_u2", on_change=update_fiscal_config)
             if use_frais_2:
                 km_2 = st.number_input("Kilomètres annuels (Trajet pro) - Conjoint ✍️", min_value=0, max_value=100000, value=int(st.session_state.config.get("f_k2", 0)), step=1000, key="in_k2", on_change=update_fiscal_config)
-                cv_2 = st.selectbox("Puissance du véhicule (CV) - Conjoint ✍️", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv2", 5))), key="in_cv2", on_change=update_fiscal_config)
+                cv_2 = st.selectbox("Puissance du véhicule (CV) - Conjoint ✍️", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv1", 5))), key="in_cv2", on_change=update_fiscal_config)
                 repas_2 = st.number_input("Jours de repas au travail - Conjoint ✍️", min_value=0, max_value=300, value=int(st.session_state.config.get("f_r2", 0)), step=10, key="in_r2", on_change=update_fiscal_config)
                 frais_km_2 = calcul_frais_km(km_2, cv_2)
                 frais_repas_2 = repas_2 * 5.35
