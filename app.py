@@ -339,6 +339,55 @@ def get_historical_fx(devise, date_val):
     except: pass
     return 1.0
 
+# --- FONCTION D'ENRICHISSEMENT (ÉCRITURE GOOGLE SHEETS) ---
+def enrichir_transactions():
+    st.toast("⏳ Calcul des PRU et recherche des taux de change historiques en cours...")
+    df = st.session_state.transactions.copy()
+    
+    if "PRU (Devise)" not in df.columns: df["PRU (Devise)"] = 0.0
+    if "Taux change (EUR)" not in df.columns: df["Taux change (EUR)"] = 0.0
+    
+    df['Date_DT'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
+    df = df.dropna(subset=['Date_DT']).sort_values('Date_DT')
+    
+    pru_data = {}
+    for idx, row in df.iterrows():
+        t = str(row['Ticker']).upper()
+        if est_devise_liquide(t): continue
+        
+        qte = float(row['Quantité'])
+        net = float(row['Montant Net'])
+        type_t = str(row['Type']).lower().strip()
+        devise = str(row['Devise']).strip().upper()
+        date_t = row['Date']
+        
+        if t not in pru_data: pru_data[t] = {"qte": 0.0, "cout_total": 0.0}
+        
+        # 1. Calcul du PRU
+        if "achat" in type_t:
+            pru_data[t]["qte"] += qte
+            pru_data[t]["cout_total"] += net
+            current_pru = pru_data[t]["cout_total"] / pru_data[t]["qte"] if pru_data[t]["qte"] > 0 else 0.0
+            df.at[idx, "PRU (Devise)"] = current_pru
+        elif "vente" in type_t:
+            current_pru = pru_data[t]["cout_total"] / pru_data[t]["qte"] if pru_data[t]["qte"] > 0 else 0.0
+            df.at[idx, "PRU (Devise)"] = current_pru
+            cout_de_la_vente = current_pru * qte
+            pru_data[t]["cout_total"] -= cout_de_la_vente
+            pru_data[t]["qte"] -= qte
+            
+        # 2. Récupération du Taux de Change
+        current_fx = extraire_nombre(row.get("Taux change (EUR)", 0))
+        if current_fx == 0 or (current_fx == 1.0 and devise != "EUR"):
+            df.at[idx, "Taux change (EUR)"] = get_historical_fx(devise, date_t)
+        elif current_fx == 0 and devise == "EUR":
+            df.at[idx, "Taux change (EUR)"] = 1.0
+            
+    df = df.drop(columns=['Date_DT'])
+    st.session_state.transactions = df
+    save_sheet("Transaction", df)
+    st.success("✅ Base de données 'Transaction' enrichie avec succès !")
+
 # --- FORMULES FISCALES ---
 def calcul_frais_km(km, cv):
     if cv <= 3:
@@ -367,7 +416,6 @@ def calcul_impot_ir(revenu_net_global, nb_parts, statut_matrimonial, apply_decot
     qf = revenu_net_global / nb_parts
     impot_brut = 0
     
-    # Barème par tranches
     if qf > 11294: impot_brut += (min(qf, 28797) - 11294) * 0.11
     if qf > 28797: impot_brut += (min(qf, 82341) - 28797) * 0.30
     if qf > 82341: impot_brut += (min(qf, 177106) - 82341) * 0.41
@@ -385,7 +433,6 @@ def calcul_impot_ir(revenu_net_global, nb_parts, statut_matrimonial, apply_decot
                 decote = 1493 - (impot_brut * 0.4525)
                 impot_brut = max(0, impot_brut - decote)
                 
-        # Seuil de recouvrement (Si < 61€, l'état ne prélève pas)
         if impot_brut < 61:
             impot_brut = 0.0
             
@@ -427,8 +474,8 @@ if "inflation" not in st.session_state:
     st.session_state.inflation = df_infl
 
 if "transactions" not in st.session_state:
-    df_trans = load_sheet("Transaction", ["Ticker", "Type", "Date", "Quantité", "Cours", "Frais", "Montant Net", "Devise"])
-    for col in ["Quantité", "Cours", "Frais", "Montant Net"]:
+    df_trans = load_sheet("Transaction", ["Ticker", "Type", "Date", "Quantité", "Cours", "Frais", "Montant Net", "Devise", "PRU (Devise)", "Taux change (EUR)"])
+    for col in ["Quantité", "Cours", "Frais", "Montant Net", "PRU (Devise)", "Taux change (EUR)"]:
         if col in df_trans.columns: df_trans[col] = df_trans[col].apply(extraire_nombre)
     st.session_state.transactions = df_trans
 
@@ -463,6 +510,11 @@ if maintenant - st.session_state.dernier_refresh_cours >= 900:
 # --- 6. NAVIGATION ---
 st.sidebar.title("Menu")
 page_choisie = st.sidebar.radio("Aller vers :", ["📊 Tableau de bord", "📋 Liste des actifs", "⚖️ Rééquilibrage", "💰 Fonds", "🏖️ Suivi", "📈 Performance", "🌴 Retraite", "🏛️ Fiscalité"])
+
+st.sidebar.divider()
+if st.sidebar.button("🛠️ Calculer PRU & FX manquants"):
+    enrichir_transactions()
+    st.rerun()
 
 st.sidebar.divider()
 if st.sidebar.button("🔄 Recharger l'application", use_container_width=True):
@@ -1046,7 +1098,7 @@ elif page_choisie == "🌴 Retraite":
 
 elif page_choisie == "🏛️ Fiscalité":
     st.title("🏛️ Simulateur Fiscal (Détail par Actif & PRU)")
-    st.write("Cet outil calcule vos plus-values à partir de votre feuille 'Transaction', choisit la meilleure imposition, et estime le montant exact de votre impôt.")
+    st.write("Cet outil lit instantanément votre feuille 'Transaction', choisit la meilleure imposition, et estime votre impôt.")
 
     if not st.session_state.transactions.empty:
         annees_dispos = sorted(pd.to_datetime(st.session_state.transactions['Date'], dayfirst=True, errors='coerce').dropna().dt.year.unique().tolist(), reverse=True)
@@ -1079,7 +1131,6 @@ elif page_choisie == "🏛️ Fiscalité":
     
     col_f1, col_f2 = st.columns(2)
     
-    # Frais Réels Déclarant 1
     with col_f1:
         use_frais_1 = st.checkbox("Déclarer aux frais réels (Vous)")
         frais_reels_1 = 0.0
@@ -1092,7 +1143,6 @@ elif page_choisie == "🏛️ Fiscalité":
             frais_reels_1 = frais_km_1 + frais_repas_1
             st.info(f"💰 Frais Réels estimés (Vous) : **{frais_reels_1:,.2f} €**")
 
-    # Frais Réels Déclarant 2
     frais_reels_2 = 0.0
     if mariage_actif:
         with col_f2:
@@ -1108,199 +1158,45 @@ elif page_choisie == "🏛️ Fiscalité":
 
     st.divider()
 
-    # --- MOTEUR DE CALCUL PRU ET PV ---
+    # --- LECTURE DIRECTE DU GOOGLE SHEET ENRICHI ---
     df_all = st.session_state.transactions.copy()
     df_all['Date_DT'] = pd.to_datetime(df_all['Date'], dayfirst=True, errors='coerce')
-    df_all = df_all.dropna(subset=['Date_DT']).sort_values('Date_DT')
+    
+    # On ne garde que les VENTES de l'année sélectionnée
+    df_ventes = df_all[df_all['Type'].str.lower().str.contains('vente')].copy()
+    df_ventes = df_ventes.dropna(subset=['Date_DT'])
+    df_ventes = df_ventes[df_ventes['Date_DT'].dt.year == annee_fiscale]
 
-    pru_data = {}
     rapport_fiscal = []
 
-    for idx, row in df_all.iterrows():
+    for idx, row in df_ventes.iterrows():
         t = str(row['Ticker']).upper()
         if est_devise_liquide(t): continue
         
-        type_t = str(row['Type']).lower().strip()
         qte = float(row['Quantité'])
         net = float(row['Montant Net'])
-        devise = str(row['Devise']).strip().upper()
-        date_t = row['Date']
-        annee_trans = row['Date_DT'].year
+        pru = float(row['PRU (Devise)'])
+        taux_eur = float(row['Taux change (EUR)'])
         
-        if t not in pru_data: pru_data[t] = {"qte": 0.0, "cout_total": 0.0}
+        cout_vente = pru * qte
+        pv_devise = net - cout_vente
+        pv_eur = pv_devise * taux_eur
         
-        if "achat" in type_t:
-            pru_data[t]["qte"] += qte
-            pru_data[t]["cout_total"] += net
-        elif "vente" in type_t:
-            current_pru = pru_data[t]["cout_total"] / pru_data[t]["qte"] if pru_data[t]["qte"] > 0 else 0.0
-            cout_de_la_vente = current_pru * qte
-            pv_devise = net - cout_de_la_vente
-            taux_eur = get_historical_fx(devise, date_t)
-            pv_eur = pv_devise * taux_eur
-            
-            pru_data[t]["cout_total"] -= cout_de_la_vente
-            pru_data[t]["qte"] -= qte
-            
-            if annee_trans == annee_fiscale:
-                is_crypto = "BTC" in t or "ETH" in t or t.endswith("USDT")
-                rapport_fiscal.append({
-                    "Actif": t, "Date de vente": date_t, "Quantité vendue": qte,
-                    "PRU Moyen (Devise)": current_pru, "Prix de revente net (Devise)": net,
-                    "Plus-value (Devise)": pv_devise, "Devise": devise,
-                    "Taux de change (Vers EUR)": taux_eur, "Plus-value (€)": pv_eur,
-                    "Catégorie": "Crypto" if is_crypto else "Action/ETF"
-                })
+        is_crypto = "BTC" in t or "ETH" in t or t.endswith("USDT")
+        
+        rapport_fiscal.append({
+            "Actif": t,
+            "Date de vente": row['Date'],
+            "Quantité vendue": qte,
+            "PRU Moyen (Devise)": pru,
+            "Prix de revente net (Devise)": net,
+            "Plus-value (Devise)": pv_devise,
+            "Devise": row['Devise'],
+            "Taux de change (Vers EUR)": taux_eur,
+            "Plus-value (€)": pv_eur,
+            "Catégorie": "Crypto" if is_crypto else "Action/ETF"
+        })
 
     df_fiscal = pd.DataFrame(rapport_fiscal)
 
-    st.subheader(f"📝 2. Détail des Ventes Boursières (Année {annee_fiscale})")
-    
-    if df_fiscal.empty:
-        st.info(f"Aucune cession d'actifs (actions ou cryptos) détectée dans la feuille 'Transaction' pour l'année {annee_fiscale}.")
-        plus_values_actions = moins_values_actions = 0.0
-        plus_values_crypto = moins_values_crypto = 0.0
-    else:
-        st.write("Ce tableau est généré automatiquement d'après vos transactions. Les conversions en Euros utilisent les taux de change historiques exacts du jour de chaque vente.")
-        
-        df_actions = df_fiscal[df_fiscal["Catégorie"] == "Action/ETF"]
-        df_cryptos = df_fiscal[df_fiscal["Catégorie"] == "Crypto"]
-        
-        plus_values_actions = df_actions[df_actions["Plus-value (€)"] > 0]["Plus-value (€)"].sum()
-        moins_values_actions = abs(df_actions[df_actions["Plus-value (€)"] < 0]["Plus-value (€)"].sum())
-        
-        plus_values_crypto = df_cryptos[df_cryptos["Plus-value (€)"] > 0]["Plus-value (€)"].sum()
-        moins_values_crypto = abs(df_cryptos[df_cryptos["Plus-value (€)"] < 0]["Plus-value (€)"].sum())
-
-        actifs_vendus = sorted(df_fiscal["Actif"].unique().tolist())
-        tabs = st.tabs(actifs_vendus)
-        
-        for i, actif in enumerate(actifs_vendus):
-            with tabs[i]:
-                df_actif = df_fiscal[df_fiscal["Actif"] == actif].copy()
-                st.dataframe(
-                    df_actif.drop(columns=["Actif", "Catégorie"]),
-                    column_config={
-                        "PRU Moyen (Devise)": st.column_config.NumberColumn(format="%.2f"),
-                        "Prix de revente net (Devise)": st.column_config.NumberColumn(format="%.2f"),
-                        "Plus-value (Devise)": st.column_config.NumberColumn(format="%.2f"),
-                        "Taux de change (Vers EUR)": st.column_config.NumberColumn(format="%.4f"),
-                        "Plus-value (€)": st.column_config.NumberColumn(format="%.2f €")
-                    },
-                    use_container_width=True, hide_index=True
-                )
-                res_actif = df_actif["Plus-value (€)"].sum()
-                color_res = "green" if res_actif >= 0 else "red"
-                st.markdown(f"*Bilan de l'année pour **{actif}** : <strong style='color:{color_res}'>{res_actif:+.2f} €</strong>*", unsafe_allow_html=True)
-
-    bilan_net_actions = plus_values_actions - moins_values_actions
-    bilan_net_crypto = plus_values_crypto - moins_values_crypto
-
-    st.divider()
-
-    # --- CALCULS FISCAUX GLOBAUX ---
-    parts = 1.0 if "Célibataire" in statut else 2.0
-    if enfants == 1: parts += 0.5
-    elif enfants == 2: parts += 1.0
-    elif enfants >= 3: parts += 1.0 + (enfants - 2)
-
-    # Détermination du revenu net imposable INDIVIDUEL (Abattement 10% vs Frais réels)
-    deduction_1 = max(salaire_1 * 0.10, frais_reels_1)
-    deduction_2 = max(salaire_2 * 0.10, frais_reels_2)
-    
-    revenu_net_1 = salaire_1 - deduction_1
-    revenu_net_2 = salaire_2 - deduction_2
-    revenu_base_net_global = revenu_net_1 + revenu_net_2
-
-    # Impôt sur les salaires uniquement
-    impot_salaires_seuls = calcul_impot_ir(revenu_base_net_global, parts, statut, apply_decote=True)
-    
-    st.subheader("💡 3. Recommandation d'imposition & Prélèvement à la Source")
-    
-    if df_fiscal.empty or (plus_values_actions == 0 and moins_values_actions == 0):
-        choix = "Aucun"
-        cout_pfu = 0.0
-        cout_bareme = 0.0
-    elif bilan_net_actions <= 0:
-        st.success("✅ **Bilan Négatif ou Nul :** Vous n'avez pas d'impôts à payer sur vos cessions boursières classiques cette année.")
-        choix = "Aucun (Bilan négatif)"
-        cout_pfu = 0.0
-        cout_bareme = 0.0
-    else:
-        # PFU (Flat Tax)
-        cout_pfu = bilan_net_actions * 0.30
-        
-        # Barème Progressif
-        impot_avec_bourse = calcul_impot_ir(revenu_base_net_global + bilan_net_actions, parts, statut, apply_decote=True)
-        surcout_ir = impot_avec_bourse - impot_salaires_seuls
-        prelevements_sociaux = bilan_net_actions * 0.172
-        cout_bareme = surcout_ir + prelevements_sociaux
-        
-        taux_moyen_bareme = (cout_bareme / bilan_net_actions) * 100
-
-        if cout_bareme < cout_pfu:
-            st.success("✅ **Le Barème Progressif est plus avantageux pour vos plus-values !**")
-            st.write(f"Sur vos {bilan_net_actions:,.2f} € de plus-values nettes :")
-            st.write(f"- Avec la Flat Tax (30%) : l'impôt serait de **{cout_pfu:,.2f} €**.")
-            st.write(f"- Avec le Barème : l'impôt est de **{cout_bareme:,.2f} €** *(Taux d'imposition effectif sur vos plus-values : {taux_moyen_bareme:.1f} %)*.")
-            choix = "Barème"
-        else:
-            st.success("✅ **La Flat Tax (PFU) est plus avantageuse pour vos plus-values !**")
-            st.write(f"Sur vos {bilan_net_actions:,.2f} € de plus-values nettes :")
-            st.write(f"- Avec le Barème, la hausse de vos revenus vous ferait basculer dans les tranches hautes, l'impôt serait de **{cout_bareme:,.2f} €**.")
-            st.write(f"- Avec la Flat Tax : l'impôt est plafonné à **{cout_pfu:,.2f} €** (Exactement 30%).")
-            choix = "PFU"
-
-    # --- CALCUL DES TAUX DE PRÉLÈVEMENT À LA SOURCE (PAS) ---
-    taux_commun = (impot_salaires_seuls / salaire_total * 100) if salaire_total > 0 else 0.0
-    mensualite_foyer = impot_salaires_seuls / 12.0
-
-    # Taux personnalisé (Déclarant 1) : Impôt théorique sans enfant ni décote sur son seul revenu net
-    impot_theorique_1 = calcul_impot_ir(revenu_net_1, 1.0, "Célibataire", apply_decote=False)
-    taux_perso_1 = (impot_theorique_1 / salaire_1 * 100) if salaire_1 > 0 else 0.0
-    mensualite_perso_1 = (salaire_1 * (taux_perso_1 / 100)) / 12.0
-
-    st.markdown("#### 📌 Bilan de vos impôts globaux estimés")
-    st.write(f"L'impôt total de votre foyer sur les salaires s'élève à **{impot_salaires_seuls:,.2f} € / an**.")
-    
-    col_taux1, col_taux2 = st.columns(2)
-    with col_taux1:
-        st.info(f"👨‍👩‍👧‍👦 **Option 1 : Le Taux Commun**\n\nLe taux unique appliqué aux deux membres du foyer.\n\n**Taux estimé : {taux_commun:.1f} %**")
-    
-    if mariage_actif:
-        with col_taux2:
-            st.success(f"👤 **Option 2 : Le Taux Personnalisé (Vous)**\n\nLe taux propre à votre salaire brut.\n\n**Votre Taux : {taux_perso_1:.1f} %**\n\n*(Prélevé sur votre salaire : {mensualite_perso_1:,.2f} € / mois)*")
-    
-    if bilan_net_actions > 0:
-        impot_bourse = cout_bareme if choix == "Barème" else cout_pfu
-        st.markdown(f"> ⚠️ **Attention :** L'impôt supplémentaire sur vos plus-values boursières (**{impot_bourse:,.2f} €**) n'est pas prélevé tous les mois. Il sera à régler en une fois lors de la régularisation de septembre.")
-
-    st.divider()
-    st.subheader("📝 4. Résumé pour votre déclaration d'impôts")
-    st.caption("⚠️ *Avertissement : Ce simulateur est une aide indicative.*")
-    
-    c_decl1, c_decl2 = st.columns(2)
-    with c_decl1:
-        st.markdown("### 🔹 Formulaire 3916 (Comptes étrangers)")
-        st.markdown("- **Case 8UU (sur la 2042) :** À cocher.")
-        st.markdown("- **Informations à fournir sur le 3916 :**")
-        st.markdown("  - *Intitulé :* Swissquote Bank SA")
-        st.markdown("  - *Adresse :* Chemin de la Crétaux 33, 1196 Gland, Suisse")
-        
-        st.markdown("### 🔹 Formulaire 2074 (Actions / ETF)")
-        if plus_values_actions > 0: st.markdown(f"- **Ligne 905 :** {plus_values_actions:,.0f} €")
-        if moins_values_actions > 0: st.markdown(f"- **Ligne 913 :** {moins_values_actions:,.0f} €")
-        
-    with c_decl2:
-        st.markdown("### 🔹 Formulaire 2086 (Cryptomonnaies)")
-        if bilan_net_crypto > 0: st.markdown(f"- **Case 3AN** (Plus-value) : **{bilan_net_crypto:,.0f} €**")
-        elif bilan_net_crypto < 0: st.markdown(f"- **Case 3BN** (Moins-value) : **{abs(bilan_net_crypto):,.0f} €**")
-        else: st.markdown("- Aucune plus ou moins-value crypto cette année.")
-
-        st.markdown("### 🔹 Déclaration Principale (Formulaire 2042)")
-        if bilan_net_actions > 0:
-            st.markdown(f"- **Case 3VG** (Plus-values nettes) : Indiquer **{bilan_net_actions:,.0f} €**")
-            if choix == "Barème": st.markdown("- **Case 2OP** : **À cocher absolument**.")
-            else: st.markdown("- **Case 2OP** : **À laisser DÉCOCHÉE**.")
-        elif bilan_net_actions < 0:
-            st.markdown(f"- **Case 3VH** (Moins-values nettes) : Indiquer **{abs(bilan_net_actions):,.0f} €**")
+    st.subheader(f"📝 2. Détail des Ventes Boursières (
