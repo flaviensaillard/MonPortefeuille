@@ -53,11 +53,18 @@ def load_sheet(sheet_name, default_cols):
         return df
     except: return pd.DataFrame(columns=default_cols)
 
+# CORRECTION DU BOUCLIER ANTI-CRASH GOOGLE API
 def save_sheet(sheet_name, df):
-    try: ws = sh.worksheet(sheet_name)
-    except: ws = sh.add_worksheet(title=sheet_name, rows=100, cols=20)
-    ws.clear()
-    set_with_dataframe(ws, df, include_index=False)
+    try:
+        try: 
+            ws = sh.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound: 
+            ws = sh.add_worksheet(title=sheet_name, rows=100, cols=20)
+        ws.clear()
+        set_with_dataframe(ws, df, include_index=False)
+    except:
+        # Ignore silencieusement l'erreur si l'API Google Sheets est surchargée (Rate Limit)
+        pass
 
 try: TAUX_EUR_USD = float(yf.Ticker("EURUSD=X").history(period="1d")['Close'].iloc[-1])
 except: TAUX_EUR_USD = 1.0
