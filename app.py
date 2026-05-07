@@ -70,6 +70,7 @@ except: TAUX_EUR_USD = 1.0
 # --- 4. FONCTIONS OUTILS & FORMATAGE INTELLIGENT ---
 
 def format_smart(val, symbol="", force_sign=False, is_price=False):
+    """Formate les nombres avec 2 décimales par défaut, et jusqu'à 6 pour les prix/quantités sans zéros inutiles."""
     if pd.isna(val) or str(val).strip() == "": return ""
     try:
         v = float(val)
@@ -277,6 +278,7 @@ def actualiser_cours_internet(silencieux=False):
         for idx, row in df_tmp.iterrows():
             tick = str(row.get("Ticker", "")).strip().upper()
             if tick and tick != "NAN":
+                
                 if tick == "USD":
                     st.session_state.variations[tick] = "→ 0.00 %"
                     df_tmp.at[idx, "Court"] = "$ 1.00"
@@ -371,46 +373,7 @@ def actualiser_cours_internet(silencieux=False):
 @st.cache_data(ttl=86400) 
 def recuperer_inflation_france():
     inflation_data = {}
-    # 1. Source Primaire : INSEE avec faux headers de navigateur
-    try:
-        req = urllib.request.Request(
-            "https://www.insee.fr/fr/statistiques/serie/telecharger/001759970?ordre=chronologique&format=csv", 
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7'
-            }
-        )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            lines = resp.read().decode('utf-8', errors='ignore').split('\n')
-            
-        yearly_indices = {}
-        for line in lines:
-            parts = line.strip().split(';')
-            if len(parts) >= 2 and '-' in parts[0]:
-                try:
-                    year = int(parts[0].split('-')[0])
-                    val_str = parts[1].replace(',', '.').replace('"', '').strip()
-                    val = float(val_str)
-                    if year not in yearly_indices:
-                        yearly_indices[year] = []
-                    yearly_indices[year].append(val)
-                except: pass
-                
-        if yearly_indices:
-            years = sorted(yearly_indices.keys())
-            for i in range(1, len(years)):
-                y = years[i]
-                prev_y = y - 1
-                if prev_y in yearly_indices:
-                    avg_y = sum(yearly_indices[y]) / len(yearly_indices[y])
-                    avg_prev_y = sum(yearly_indices[prev_y]) / len(yearly_indices[prev_y])
-                    inflation = ((avg_y / avg_prev_y) - 1) * 100
-                    if y >= 2023:
-                        inflation_data[y] = round(inflation, 2)
-    except: pass
-    
-    # 2. Source Secondaire : Banque Mondiale (Fallback)
+    # Retour exclusif à la Banque Mondiale
     try:
         req = urllib.request.Request("https://api.worldbank.org/v2/country/FRA/indicator/FP.CPI.TOTL.ZG?format=json&per_page=20", headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -421,9 +384,10 @@ def recuperer_inflation_france():
                         year = int(i['date'])
                         if year not in inflation_data:
                             inflation_data[year] = round(float(i['value']), 2)
+        if inflation_data: return inflation_data
     except: pass
     
-    return inflation_data if inflation_data else None
+    return None
 
 def get_historical_fx(devise, date_val):
     d_clean = str(devise).upper().strip()
@@ -857,6 +821,12 @@ elif page_choisie == "📋 Liste des actifs":
 elif page_choisie == "⚖️ Rééquilibrage":
     st.title("⚖️ Rééquilibrage & Transactions")
     
+    if st.button("🔄 Actualiser les cours", use_container_width=True):
+        actualiser_cours_internet(False)
+        st.rerun()
+        
+    st.write("")
+    
     with st.expander("➕ Enregistrer une transaction (Achat/Vente)"):
         with st.form("new_trans"):
             c1, c2, c3 = st.columns(3)
@@ -933,10 +903,6 @@ elif page_choisie == "⚖️ Rééquilibrage":
                     st.rerun()
 
     st.divider()
-    if st.button("🔄 Actualiser les cours", use_container_width=True):
-        actualiser_cours_internet(False)
-        st.rerun()
-        
     st.subheader("⚖️ Analyse de l'allocation")
     df = st.session_state.donnees
     
@@ -1127,7 +1093,7 @@ elif page_choisie == "📈 Performance":
         
         st.divider()
         
-        st.write("Ce tableau récapitule vos résultats par année civile. L'inflation est mise à jour automatiquement depuis l'INSEE.")
+        st.write("Ce tableau récapitule vos résultats par année civile. L'inflation est mise à jour automatiquement par l'API.")
         
         df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Actifs Stratégiques', 'Valeur Bilan (Or)']].copy()
         df_display.rename(columns={'Actifs Stratégiques': 'Valeur Bilan ($)'}, inplace=True)
