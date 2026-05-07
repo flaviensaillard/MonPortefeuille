@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import yfinance as yf
 import re
 import datetime
@@ -22,6 +23,7 @@ if st.sidebar.button("🔄 Recharger l'application", use_container_width=True):
     st.session_state.clear()
     st.rerun()
 
+# Auto-refresh intelligent : Désactivé pendant la saisie de transactions ou la fiscalité
 if page_choisie in ["📊 Tableau de bord", "📋 Liste des actifs", "🏖️ Suivi"]:
     st_autorefresh(interval=15 * 60 * 1000, key="datarefresh")
 
@@ -64,14 +66,25 @@ def load_sheet(sheet_name, default_cols):
 
 def save_sheet(sheet_name, df):
     try:
-        try: 
-            ws = sh.worksheet(sheet_name)
-        except gspread.exceptions.WorksheetNotFound: 
-            ws = sh.add_worksheet(title=sheet_name, rows=100, cols=20)
+        try: ws = sh.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound: ws = sh.add_worksheet(title=sheet_name, rows=100, cols=20)
         ws.clear()
         set_with_dataframe(ws, df, include_index=False)
     except Exception as e:
         st.error(f"⚠️ Échec de l'enregistrement dans '{sheet_name}'. Vérifiez les quotas de l'API Google.")
+
+def append_to_sheet(sheet_name, new_row_dict):
+    """V4 : Ajoute une ligne à la fin du fichier sans tout réécrire (Ultra rapide et sûr)."""
+    try:
+        ws = sh.worksheet(sheet_name)
+        headers = ws.row_values(1)
+        if not headers:
+            headers = list(new_row_dict.keys())
+            ws.append_row(headers)
+        row_values = [new_row_dict.get(h, "") for h in headers]
+        ws.append_row(row_values)
+    except Exception as e:
+        raise ValueError("⚠️ Échec de communication avec la base de données Google Sheets. Opération annulée pour éviter la perte de données.")
 
 try: TAUX_EUR_USD = float(yf.Ticker("EURUSD=X").history(period="1d")['Close'].iloc[-1])
 except: TAUX_EUR_USD = 1.0
@@ -132,50 +145,44 @@ def is_crypto_ticker(ticker):
     t = str(ticker).upper().strip()
     return t in ["BTC", "ETH", "USDT", "SOL", "ADA", "XRP", "DOT", "DOGE", "AVAX", "LINK", "BNB"] or t.endswith(("-USD", "USDT"))
 
-def nettoyer_dataframe(df):
-    cols_finales = ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)", "Devise Cotation"]
-    for col in df.columns:
-        if "quantit" in str(col).lower() or "qte" in str(col).lower(): df.rename(columns={col: "Quantité"}, inplace=True)
-        if "cotation" in str(col).lower(): df.rename(columns={col: "Devise Cotation"}, inplace=True)
-        
-    for idx, row in df.iterrows():
-        t_clean = str(row.get("Ticker", "")).upper().strip()
-        if t_clean.endswith("USD=X") and len(t_clean) == 8: df.at[idx, "Ticker"] = t_clean[:3]
-        elif t_clean.endswith("=X") and len(t_clean) == 5: df.at[idx, "Ticker"] = t_clean[:3]
+def _clean_ticker_v4(t):
+    t_clean = str(t).upper().strip()
+    if t_clean.endswith("USD=X") and len(t_clean) == 8: return t_clean[:3]
+    if t_clean.endswith("=X") and len(t_clean) == 5: return t_clean[:3]
+    return t_clean
 
-    if "Type" not in df.columns:
-        df["Type"] = ""
-        for idx, row in df.iterrows():
-            tick = str(row.get("Ticker", "")).upper()
-            df.at[idx, "Type"] = "💵 Cash" if est_devise_liquide(tick) else "₿ Crypto" if is_crypto_ticker(tick) else "🛢️ Action"
-    else:
-        for idx, row in df.iterrows():
-            t = re.sub(r'[^\w\s]', '', str(row.get("Type", ""))).strip().upper()
-            if "ACTION" in t: df.at[idx, "Type"] = "🛢️ Action"
-            elif "OBLIGATION" in t: df.at[idx, "Type"] = "📜 Obligation"
-            elif "OR" in t: df.at[idx, "Type"] = "💰 Or"
-            elif "CRYPTO" in t: df.at[idx, "Type"] = "₿ Crypto"
-            elif "RÉSERVE" in t or "RESERVE" in t: df.at[idx, "Type"] = "🏦 Cash réserve"
-            elif "CASH" in t: df.at[idx, "Type"] = "💵 Cash"
-            else: 
-                tick = str(row.get("Ticker", "")).upper()
-                df.at[idx, "Type"] = "💵 Cash" if est_devise_liquide(tick) else "₿ Crypto" if is_crypto_ticker(tick) else "🛢️ Action"
-            
+def _assign_type_v4(row):
+    t = re.sub(r'[^\w\s]', '', str(row.get("Type", ""))).strip().upper()
+    tick = str(row.get("Ticker", "")).upper().strip()
+    if "ACTION" in t: return "🛢️ Action"
+    elif "OBLIGATION" in t: return "📜 Obligation"
+    elif "OR" in t: return "💰 Or"
+    elif "CRYPTO" in t: return "₿ Crypto"
+    elif "RÉSERVE" in t or "RESERVE" in t: return "🏦 Cash réserve"
+    elif "CASH" in t: return "💵 Cash"
+    else: return "💵 Cash" if est_devise_liquide(tick) else "₿ Crypto" if is_crypto_ticker(tick) else "🛢️ Action"
+
+def nettoyer_dataframe(df):
+    """V4 : Entièrement vectorisé, fin de la boucle iterrows pour une vitesse d'exécution instantanée."""
+    cols_finales = ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)", "Devise Cotation"]
+    if df.empty: return pd.DataFrame(columns=cols_finales)
+    
+    df.columns = [str(c).replace("quantit", "Quantité").replace("qte", "Quantité").replace("cotation", "Devise Cotation") for c in df.columns]
+    if "Ticker" in df.columns: df["Ticker"] = df["Ticker"].apply(_clean_ticker_v4)
+    if "Type" not in df.columns: df["Type"] = ""
+    df["Type"] = df.apply(_assign_type_v4, axis=1)
+
     for col in cols_finales:
         if col not in df.columns:
             if col == "Devise Cotation": df[col] = "Auto"
             elif col in ["Quantité", "Pourcentage (%)"]: df[col] = 0.0
             else: df[col] = "$ 0.00"
-            
-    # S'assurer que Devise Cotation n'est jamais vide
-    df["Devise Cotation"] = df["Devise Cotation"].fillna("Auto")
-    df["Devise Cotation"] = df["Devise Cotation"].apply(lambda x: "Auto" if str(x).strip() == "" else str(x).strip().capitalize() if str(x).strip().lower() == "auto" else str(x).strip().upper())
-        
-    if "Quantité" in df.columns: df["Quantité"] = df["Quantité"].apply(extraire_nombre)
-    if "Pourcentage (%)" in df.columns: df["Pourcentage (%)"] = df["Pourcentage (%)"].apply(extraire_nombre)
+
+    df["Devise Cotation"] = df["Devise Cotation"].fillna("Auto").apply(lambda x: "Auto" if str(x).strip() == "" else str(x).strip().capitalize() if str(x).strip().lower() == "auto" else str(x).strip().upper())
+    df["Quantité"] = df["Quantité"].apply(extraire_nombre)
+    df["Pourcentage (%)"] = df["Pourcentage (%)"].apply(extraire_nombre)
     
-    df = df.groupby(["Ticker", "Type"], as_index=False).agg({"Quantité": "sum", "Court": "first", "Valeur totale": "first", "Pourcentage (%)": "sum", "Devise Cotation": "first"})
-    return df[cols_finales].reset_index(drop=True)
+    return df.groupby(["Ticker", "Type"], as_index=False).agg({"Quantité": "sum", "Court": "first", "Valeur totale": "first", "Pourcentage (%)": "sum", "Devise Cotation": "first"})[cols_finales]
 
 def get_pru_and_qty(ticker, df_transactions):
     df_tick = df_transactions[df_transactions['Ticker'] == ticker].copy()
@@ -187,7 +194,8 @@ def get_pru_and_qty(ticker, df_transactions):
     for _, r in df_tick.iterrows():
         typ, qte, net_local = str(r['Type']).lower(), extraire_nombre(r['Quantité']), extraire_nombre(r['Montant Net'])
         devise = str(r.get('Devise', 'USD')).strip().upper()
-        net_usd = net_local * get_historical_usd_rate(devise, r['Date'])
+        # Strict=False car on lit l'historique : si Yahoo plante sur une date de 2021, on ne bloque pas l'app.
+        net_usd = net_local * get_historical_usd_rate(devise, r['Date'], strict=False)
         if "achat" in typ:
             total_cost_usd += net_usd; total_qty += qte
         elif "vente" in typ:
@@ -198,68 +206,93 @@ def get_pru_and_qty(ticker, df_transactions):
     return round(total_cost_usd / total_qty if total_qty > 0 else 0.0, 6), round(total_qty, 6)
 
 def recalculer_toute_la_base_projections(df):
+    """V4 : Calcul matriciel (Vectorisation Pandas) : Extrêmement rapide même avec des milliers de jours."""
     if df is None or df.empty: return df
     df_t = df.copy()
     for i, nom in enumerate(["Date", "Capital investi", "Actifs Stratégiques", "Total Global"]):
         if i < len(df_t.columns): df_t.rename(columns={df_t.columns[i]: nom}, inplace=True)
-    for col in ["Capital investi", "Actifs Stratégiques", "Total Global"]: df_t[col] = df_t[col].apply(extraire_nombre)
+    for col in ["Capital investi", "Actifs Stratégiques", "Total Global"]: 
+        df_t[col] = df_t[col].apply(extraire_nombre)
+        
     df_t['DT_TRI'] = pd.to_datetime(df_t['Date'], dayfirst=True, errors='coerce')
     df_t = df_t.sort_values('DT_TRI').reset_index(drop=True)
-    res, c_twr, tg_twr = [], 1.0, 1.0
-    for i in range(len(df_t)):
-        r = df_t.iloc[i].to_dict()
-        cap, act, tg = r["Capital investi"], r["Actifs Stratégiques"], r["Total Global"]
-        if i == 0:
-            r["Evolution actifs $"] = r["Evolution actifs %"] = 0.0
-            r["Evolution cumulée $"], r["Evolution cumulée %"] = act - cap, ((act - cap) / cap * 100) if cap != 0 else 0.0
-            r["TG_Evolution cumulée $"], r["TG_Evolution cumulée %"] = tg - cap, ((tg - cap) / cap * 100) if cap != 0 else 0.0
-            c_twr *= (1 + ((act - cap) / cap if cap != 0 else 0.0))
-            tg_twr *= (1 + ((tg - cap) / cap if cap != 0 else 0.0))
-        else:
-            prev = df_t.iloc[i-1]; d_cap = cap - prev["Capital investi"]
-            evo_usd = (act - prev["Actifs Stratégiques"]) - d_cap
-            r["Evolution actifs $"], r["Evolution actifs %"] = evo_usd, (evo_usd / prev["Actifs Stratégiques"] * 100) if prev["Actifs Stratégiques"] != 0 else 0.0
-            r["Evolution cumulée $"], r["Evolution cumulée %"] = act - cap, ((act - cap) / cap * 100) if cap != 0 else 0.0
-            c_twr *= (1 + (evo_usd / (prev["Actifs Stratégiques"] + d_cap) if (prev["Actifs Stratégiques"] + d_cap) != 0 else 0.0))
-            evo_tg = (tg - prev["Total Global"]) - d_cap
-            r["TG_Evolution cumulée $"], r["TG_Evolution cumulée %"] = tg - cap, ((tg - cap) / cap * 100) if cap != 0 else 0.0
-            tg_twr *= (1 + (evo_tg / (prev["Total Global"] + d_cap) if (prev["Total Global"] + d_cap) != 0 else 0.0))
-        r["Score TWR %"], r["TG_Score TWR %"] = (c_twr - 1) * 100, (tg_twr - 1) * 100
-        res.append(r)
-    df_f = pd.DataFrame(res)
-    if 'DT_TRI' in df_f.columns: df_f.drop(columns=['DT_TRI'], inplace=True)
-    return df_f[["Date", "Capital investi", "Actifs Stratégiques", "Total Global", "Evolution actifs $", "Evolution actifs %", "Evolution cumulée $", "Evolution cumulée %", "Score TWR %", "TG_Evolution cumulée $", "TG_Evolution cumulée %", "TG_Score TWR %"]]
+    
+    df_t["Capital investi Prev"] = df_t["Capital investi"].shift(1).fillna(df_t["Capital investi"])
+    df_t["Actifs Stratégiques Prev"] = df_t["Actifs Stratégiques"].shift(1).fillna(df_t["Actifs Stratégiques"])
+    df_t["Total Global Prev"] = df_t["Total Global"].shift(1).fillna(df_t["Total Global"])
+    df_t["D_Cap"] = df_t["Capital investi"] - df_t["Capital investi Prev"]
+    
+    # Evolution Strat
+    df_t["Evolution actifs $"] = (df_t["Actifs Stratégiques"] - df_t["Actifs Stratégiques Prev"]) - df_t["D_Cap"]
+    df_t.loc[0, "Evolution actifs $"] = 0.0
+    df_t["Evolution actifs %"] = (df_t["Evolution actifs $"] / df_t["Actifs Stratégiques Prev"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+    df_t.loc[0, "Evolution actifs %"] = 0.0
+    df_t["Evolution cumulée $"] = df_t["Actifs Stratégiques"] - df_t["Capital investi"]
+    df_t["Evolution cumulée %"] = (df_t["Evolution cumulée $"] / df_t["Capital investi"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+    
+    # TWR Strat
+    base_twr = df_t["Actifs Stratégiques Prev"] + df_t["D_Cap"]
+    df_t["TWR_Fact"] = 1 + (df_t["Evolution actifs $"] / base_twr).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+    df_t.loc[0, "TWR_Fact"] = 1 + (df_t.loc[0, "Evolution cumulée $"] / df_t.loc[0, "Capital investi"] if df_t.loc[0, "Capital investi"] != 0 else 0.0)
+    df_t["Score TWR %"] = (df_t["TWR_Fact"].cumprod() - 1) * 100
+    
+    # Evolution Total Global
+    df_t["Evo_TG"] = (df_t["Total Global"] - df_t["Total Global Prev"]) - df_t["D_Cap"]
+    df_t["TG_Evolution cumulée $"] = df_t["Total Global"] - df_t["Capital investi"]
+    df_t["TG_Evolution cumulée %"] = (df_t["TG_Evolution cumulée $"] / df_t["Capital investi"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+    
+    # TWR Total Global
+    base_tg_twr = df_t["Total Global Prev"] + df_t["D_Cap"]
+    df_t["TG_TWR_Fact"] = 1 + (df_t["Evo_TG"] / base_tg_twr).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+    df_t.loc[0, "TG_TWR_Fact"] = 1 + (df_t.loc[0, "TG_Evolution cumulée $"] / df_t.loc[0, "Capital investi"] if df_t.loc[0, "Capital investi"] != 0 else 0.0)
+    df_t["TG_Score TWR %"] = (df_t["TG_TWR_Fact"].cumprod() - 1) * 100
+    
+    return df_t[["Date", "Capital investi", "Actifs Stratégiques", "Total Global", "Evolution actifs $", "Evolution actifs %", "Evolution cumulée $", "Evolution cumulée %", "Score TWR %", "TG_Evolution cumulée $", "TG_Evolution cumulée %", "TG_Score TWR %"]]
 
 def recalculer_totaux_locaux():
     if "donnees" in st.session_state:
         df = st.session_state.donnees.copy()
+        df["Val_Calc"] = df["Court"].apply(extraire_nombre) * df["Quantité"].apply(extraire_nombre)
+        df["Valeur totale"] = df["Val_Calc"].apply(lambda x: format_smart(x, "$"))
         for idx, row in df.iterrows():
-            c, q = extraire_nombre(row.get("Court", 0)), extraire_nombre(row.get("Quantité", 0))
             t = str(row.get("Ticker", "")).upper()
-            df.at[idx, "Valeur totale"] = format_smart(c * q, "$")
-            df.at[idx, "Court"] = "$ 1.00" if t == "USD" else format_smart(c, "$", is_price=True)
-        st.session_state.donnees = df
+            df.at[idx, "Court"] = "$ 1.00" if t == "USD" else format_smart(extraire_nombre(row.get("Court", 0)), "$", is_price=True)
+        st.session_state.donnees = df.drop(columns=["Val_Calc"])
 
 def calculer_metriques_jour(df_actuel, variations):
-    val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
-    val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
-    somme_p = sum(extraire_nombre(r["Pourcentage (%)"]) for _, r in df_actuel.iterrows())
-    v_jour_tg_usd = val_tot_veille = v_jour_strat_usd = val_inv_veille = 0.0
-    for _, r in df_actuel.iterrows():
-        tick = str(r.get("Ticker", "")).strip().upper()
-        v_act = extraire_nombre(r["Valeur totale"])
-        match = re.search(r'([+-]?\d+\.?\d*)', variations.get(tick, "0"))
-        v_pct = float(match.group(1)) if match else 0.0
-        v_veil = v_act / (1 + v_pct / 100) if (1 + v_pct / 100) != 0 else v_act
-        
-        v_jour_tg_usd += (v_act - v_veil); val_tot_veille += v_veil
-        if extraire_nombre(r["Pourcentage (%)"]) > 0:
-            v_jour_strat_usd += (v_act - v_veil); val_inv_veille += v_veil
-    return val_invest, val_total, somme_p, v_jour_tg_usd, (v_jour_tg_usd / val_tot_veille * 100) if val_tot_veille > 0 else 0.0, v_jour_strat_usd, (v_jour_strat_usd / val_inv_veille * 100) if val_inv_veille > 0 else 0.0
+    """V4 : Nettoyage complet de la boucle iterrows pour le tableau de bord."""
+    if df_actuel.empty: return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    
+    df = df_actuel.copy()
+    df["Val_Num"] = df["Valeur totale"].apply(extraire_nombre)
+    df["Pct_Num"] = df["Pourcentage (%)"].apply(extraire_nombre)
+    
+    val_total = df["Val_Num"].sum()
+    val_invest = df.loc[df["Pct_Num"] > 0, "Val_Num"].sum()
+    somme_p = df["Pct_Num"].sum()
+    
+    def parse_var(tick):
+        match = re.search(r'([+-]?\d+\.?\d*)', variations.get(str(tick).upper(), "0"))
+        return float(match.group(1)) if match else 0.0
+
+    df["Var_Pct"] = df["Ticker"].apply(parse_var)
+    df["Val_Veille"] = df["Val_Num"] / (1 + df["Var_Pct"] / 100.0)
+    df["Val_Veille"] = df["Val_Veille"].fillna(df["Val_Num"])
+    
+    v_jour_tg_usd = (df["Val_Num"] - df["Val_Veille"]).sum()
+    val_tot_veille = df["Val_Veille"].sum()
+    pct_jour_tg = (v_jour_tg_usd / val_tot_veille * 100) if val_tot_veille > 0 else 0.0
+    
+    df_strat = df[df["Pct_Num"] > 0]
+    v_jour_strat_usd = (df_strat["Val_Num"] - df_strat["Val_Veille"]).sum()
+    val_inv_veille = df_strat["Val_Veille"].sum()
+    pct_jour_strat = (v_jour_strat_usd / val_inv_veille * 100) if val_inv_veille > 0 else 0.0
+    
+    return val_invest, val_total, somme_p, v_jour_tg_usd, pct_jour_tg, v_jour_strat_usd, pct_jour_strat
 
 def actualiser_cours_internet(silencieux=False):
     if "donnees" in st.session_state:
-        if not silencieux: st.toast("🔄 Actualisation des cours boursiers en cours...")
+        if not silencieux: st.toast("🔄 Actualisation massive des cours en cours...")
         df_tmp = st.session_state.donnees.copy()
         changement = False
         
@@ -282,14 +315,12 @@ def actualiser_cours_internet(silencieux=False):
         hist_data = {}
         if yf_tickers_to_fetch:
             tickers_list = list(yf_tickers_to_fetch)
-            # Mise en cache des devises Yahoo
             for yf_t in tickers_list:
                 if yf_t not in st.session_state.yf_currencies:
                     try:
                         c = str(yf.Ticker(yf_t).fast_info.get('currency', 'USD')).strip().upper()
                         st.session_state.yf_currencies[yf_t] = c if c not in ["", "NONE"] else "USD"
                     except: st.session_state.yf_currencies[yf_t] = "USD"
-            
             try:
                 data = yf.download(tickers_list, period="5d", progress=False)['Close']
                 for yf_t in tickers_list:
@@ -299,6 +330,13 @@ def actualiser_cours_internet(silencieux=False):
                             hist_data[yf_t] = (float(col.iloc[-1]), float(col.iloc[-2]) if len(col) >= 2 else float(col.iloc[-1]))
                     except: pass
             except: st.error("⚠️ Erreur de connexion massive à Yahoo Finance.")
+
+        dev_map = {}
+        if "transactions" in st.session_state and not st.session_state.transactions.empty:
+            df_t_map = st.session_state.transactions.copy()
+            if 'Date_DT' not in df_t_map.columns: df_t_map['Date_DT'] = pd.to_datetime(df_t_map['Date'], dayfirst=True, errors='coerce')
+            df_t_map = df_t_map.dropna(subset=['Date_DT']).sort_values('Date_DT')
+            for _, rt in df_t_map.iterrows(): dev_map[str(rt['Ticker']).strip().upper()] = str(rt.get('Devise', 'USD')).strip().upper()
 
         taux_cache = {}
         for idx, row in df_tmp.iterrows():
@@ -334,7 +372,6 @@ def actualiser_cours_internet(silencieux=False):
                 if tick in ["EUR", "CHF", "JPY", "GBP", "CNY", "CAD", "AUD"]:
                     df_tmp.at[idx, "Court"] = format_smart(p_loc, "$", is_price=True)
                 else:
-                    # OVERRIDE : Lecture de la Devise Live demandée par l'utilisateur
                     dev_cot = str(row.get("Devise Cotation", "Auto")).strip().upper()
                     if dev_cot in ["AUTO", "", "NAN"]: dev = st.session_state.yf_currencies.get(yf_t, "USD")
                     else: dev = dev_cot
@@ -364,7 +401,7 @@ def recuperer_inflation_france():
     try:
         req = urllib.request.Request(
             "https://www.insee.fr/fr/statistiques/serie/telecharger/001759970?ordre=chronologique&format=csv", 
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Accept': 'text/html,*/*'}
+            headers={'User-Agent': 'Mozilla/5.0', 'Accept': '*/*'}
         )
         with urllib.request.urlopen(req, timeout=8) as resp:
             lines = resp.read().decode('utf-8', errors='ignore').split('\n')
@@ -399,28 +436,46 @@ def recuperer_inflation_france():
     except: pass
     return inflation_data if inflation_data else None
 
-def get_historical_fx(devise, date_val):
+def get_historical_fx(devise, date_val, strict=False):
+    """V4 : Sécurité Anti-Crash ajoutée."""
     d_clean = str(devise).upper().strip()
     if d_clean in ["EUR", ""]: return 1.0
+    t = f"{d_clean}EUR=X"
     try:
         d = pd.to_datetime(date_val, dayfirst=True, errors='coerce')
-        if pd.isna(d): return 1.0
-        if d >= pd.Timestamp.now() - pd.Timedelta(days=1): return float(yf.Ticker(f"{d_clean}EUR=X").history(period="1d")['Close'].iloc[-1])
-        h = yf.Ticker(f"{d_clean}EUR=X").history(start=(d - pd.Timedelta(days=5)).strftime('%Y-%m-%d'), end=(d + pd.Timedelta(days=1)).strftime('%Y-%m-%d'))
-        return float(h['Close'].iloc[-1]) if not h.empty else 1.0
-    except: return 1.0
+        if pd.isna(d): raise ValueError("Date Invalide")
+        if d >= pd.Timestamp.now() - pd.Timedelta(days=1):
+            h = yf.Ticker(t).history(period="1d")
+            if not h.empty: return float(h['Close'].iloc[-1])
+        else:
+            h = yf.Ticker(t).history(start=(d - pd.Timedelta(days=5)).strftime('%Y-%m-%d'), end=(d + pd.Timedelta(days=1)).strftime('%Y-%m-%d'))
+            if not h.empty: return float(h['Close'].iloc[-1])
+            h_fb = yf.Ticker(t).history(period="1d")
+            if not h_fb.empty: return float(h_fb['Close'].iloc[-1])
+    except Exception as e: pass
+    if strict: raise ValueError(f"⚠️ Échec réseau : Impossible de vérifier le taux {d_clean}/EUR pour la date demandée. Opération bloquée par sécurité. Réessayez.")
+    return 1.0
 
 @st.cache_data(ttl=86400)
-def get_historical_usd_rate(devise, date_val):
+def get_historical_usd_rate(devise, date_val, strict=False):
+    """V4 : Sécurité Anti-Crash ajoutée."""
     d_clean = str(devise).upper().strip()
     if d_clean in ["USD", ""]: return 1.0
+    t = f"{d_clean}USD=X"
     try:
         d = pd.to_datetime(date_val, dayfirst=True, errors='coerce')
-        if pd.isna(d): return 1.0
-        if d >= pd.Timestamp.now() - pd.Timedelta(days=1): return float(yf.Ticker(f"{d_clean}USD=X").history(period="1d")['Close'].iloc[-1])
-        h = yf.Ticker(f"{d_clean}USD=X").history(start=(d - pd.Timedelta(days=5)).strftime('%Y-%m-%d'), end=(d + pd.Timedelta(days=1)).strftime('%Y-%m-%d'))
-        return float(h['Close'].iloc[-1]) if not h.empty else 1.0
-    except: return 1.0
+        if pd.isna(d): raise ValueError("Date Invalide")
+        if d >= pd.Timestamp.now() - pd.Timedelta(days=1):
+            h = yf.Ticker(t).history(period="1d")
+            if not h.empty: return float(h['Close'].iloc[-1])
+        else:
+            h = yf.Ticker(t).history(start=(d - pd.Timedelta(days=5)).strftime('%Y-%m-%d'), end=(d + pd.Timedelta(days=1)).strftime('%Y-%m-%d'))
+            if not h.empty: return float(h['Close'].iloc[-1])
+            h_fb = yf.Ticker(t).history(period="1d")
+            if not h_fb.empty: return float(h_fb['Close'].iloc[-1])
+    except Exception as e: pass
+    if strict: raise ValueError(f"⚠️ Échec réseau : Impossible de vérifier le taux {d_clean}/USD auprès de Yahoo. Transaction annulée par sécurité. Réessayez.")
+    return 1.0
 
 def calcul_frais_km(km, cv):
     try:
@@ -456,7 +511,7 @@ def get_action_tax_data(df_transactions, target_year):
         t = str(row['Ticker']).upper()
         if est_devise_liquide(t) or is_crypto_ticker(t): continue
         typ, qte, net_local = str(row['Type']).lower(), extraire_nombre(row['Quantité']), extraire_nombre(row['Montant Net'])
-        net_eur = net_local * get_historical_fx(str(row.get('Devise', 'USD')).strip().upper(), row['Date'])
+        net_eur = net_local * get_historical_fx(str(row.get('Devise', 'USD')).strip().upper(), row['Date'], strict=False)
         if t not in balances: balances[t] = {'qty': 0.0, 'cost_eur': 0.0}
         if "achat" in typ:
             balances[t]['qty'] += qte; balances[t]['cost_eur'] += net_eur
@@ -478,7 +533,7 @@ def get_crypto_tax_data(df_transactions, target_year):
         t = str(row['Ticker']).upper()
         if not is_crypto_ticker(t): continue
         typ, qte, net_local = str(row['Type']).lower(), extraire_nombre(row['Quantité']), extraire_nombre(row['Montant Net'])
-        net_eur = net_local * get_historical_fx(str(row.get('Devise', 'USD')).strip().upper(), row['Date'])
+        net_eur = net_local * get_historical_fx(str(row.get('Devise', 'USD')).strip().upper(), row['Date'], strict=False)
         if "achat" in typ:
             total_acq_cost += net_eur; crypto_balances[t] = crypto_balances.get(t, 0.0) + qte
         elif "vente" in typ:
@@ -489,7 +544,7 @@ def get_crypto_tax_data(df_transactions, target_year):
                     else:
                         try:
                             h_px_usd = float(yf.Ticker(f"{c_tick}-USD").history(start=(row['Date_DT'] - pd.Timedelta(days=3)).strftime('%Y-%m-%d'), end=(row['Date_DT'] + pd.Timedelta(days=2)).strftime('%Y-%m-%d'))['Close'].iloc[-1])
-                            valeur_globale += (c_qty * h_px_usd * get_historical_fx("USD", row['Date']))
+                            valeur_globale += (c_qty * h_px_usd * get_historical_fx("USD", row['Date'], strict=False))
                         except: pass
             if valeur_globale < prix_cession_eur: valeur_globale = prix_cession_eur
             fraction_capital = total_acq_cost * (prix_cession_eur / valeur_globale) if valeur_globale > 0 else 0.0
@@ -584,9 +639,9 @@ if page_choisie == "📊 Tableau de bord":
 
     besoin_req = False
     if val_invest > 0:
-        for _, r in df_actuel.iterrows():
-            cib = extraire_nombre(r["Pourcentage (%)"]) / 100
-            if cib > 0:
+        if (df_actuel["Pourcentage (%)"].apply(extraire_nombre) > 0).any():
+            for _, r in df_actuel[df_actuel["Pourcentage (%)"].apply(extraire_nombre) > 0].iterrows():
+                cib = extraire_nombre(r["Pourcentage (%)"]) / 100
                 act = extraire_nombre(r["Valeur totale"])
                 if abs((val_invest * cib) - act) >= 1000 and abs((act / val_invest * 100) - (cib * 100)) >= 2.0: besoin_req = True; break
 
@@ -777,35 +832,43 @@ elif page_choisie == "⚖️ Rééquilibrage":
             c4, c5, c6 = st.columns(3)
             t_q = c4.number_input("Quantité", min_value=0.0, format="%.6f"); t_c = c5.number_input("Cours unitaire payé", min_value=0.0, format="%.6f"); t_f = c6.number_input("Frais de transaction", min_value=0.0, format="%.6f")
             t_dev = st.selectbox("Devise de la transaction (Débitée/Créditée)", ["USD", "EUR", "CHF", "JPY", "GBP", "CNY", "CAD", "AUD"])
+            
             if st.form_submit_button("🔨 Valider la transaction"):
-                if t_t.strip() == "": st.error("❌ Le Ticker ne peut pas être vide.")
-                elif t_q <= 0: st.error("❌ La quantité doit être strictement supérieure à 0.")
-                elif t_c <= 0: st.error("❌ Le cours doit être strictement supérieur à 0.")
-                else:
-                    t_cl = t_t.upper().strip(); m_n = round((t_q * t_c) + t_f if t_ty == "Achat" else (t_q * t_c) - t_f, 6)
-                    fx = get_historical_fx(t_dev, t_d.strftime("%Y-%m-%d"))
-                    c_pru_usd, c_qty = get_pru_and_qty(t_cl, st.session_state.transactions)
-                    if t_ty == "Achat":
-                        net_usd = m_n * get_historical_usd_rate(t_dev, t_d.strftime("%Y-%m-%d"))
-                        new_qty = c_qty + t_q
-                        r_pru_usd = round(((c_pru_usd * c_qty) + net_usd) / new_qty, 6) if new_qty > 0 else 0.0
-                    else: r_pru_usd = c_pru_usd
-                    st.session_state.transactions = pd.concat([st.session_state.transactions, pd.DataFrame([{"Ticker": t_cl, "Type": t_ty, "Date": t_d.strftime("%d/%m/%Y"), "Quantité": t_q, "Cours": t_c, "Frais": t_f, "Montant Net": m_n, "Devise": t_dev, "PRU (Devise)": r_pru_usd, "Taux change (EUR)": fx}])], ignore_index=True)
-                    save_sheet("Transaction", st.session_state.transactions[[c for c in st.session_state.transactions.columns if c != 'Date_DT']])
-                    
-                    df_d = st.session_state.donnees.copy()
-                    if not df_d.index[df_d['Ticker'] == t_cl].tolist():
-                        df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": t_cl, "Type": "₿ Crypto" if is_crypto_ticker(t_cl) else "🛢️ Action", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0, "Devise Cotation": "Auto"}])], ignore_index=True)
-                    idx = df_d.index[df_d['Ticker'] == t_cl].tolist()[0]
-                    df_d.at[idx, "Quantité"] = max(0.0, extraire_nombre(df_d.at[idx, "Quantité"]) + (t_q if t_ty == "Achat" else -t_q))
-                    
-                    if not df_d.index[df_d['Ticker'] == t_dev].tolist():
-                        df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": t_dev, "Type": "💵 Cash", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0, "Devise Cotation": "Auto"}])], ignore_index=True)
-                    i_c = df_d.index[df_d['Ticker'] == t_dev].tolist()[0]
-                    df_d.at[i_c, "Quantité"] = max(0.0, extraire_nombre(df_d.at[i_c, "Quantité"]) + (-m_n if t_ty == "Achat" else m_n))
-                    
-                    st.session_state.donnees = nettoyer_dataframe(df_d); recalculer_totaux_locaux(); save_sheet("Donnees", st.session_state.donnees)
-                    st.success("✅ Transaction enregistrée !"); time.sleep(1); st.rerun()
+                try:
+                    if t_t.strip() == "": st.error("❌ Le Ticker ne peut pas être vide.")
+                    elif t_q <= 0: st.error("❌ La quantité doit être strictement supérieure à 0.")
+                    elif t_c <= 0: st.error("❌ Le cours doit être strictement supérieur à 0.")
+                    else:
+                        t_cl = t_t.upper().strip(); m_n = round((t_q * t_c) + t_f if t_ty == "Achat" else (t_q * t_c) - t_f, 6)
+                        fx = get_historical_fx(t_dev, t_d.strftime("%Y-%m-%d"), strict=True)
+                        c_pru_usd, c_qty = get_pru_and_qty(t_cl, st.session_state.transactions)
+                        
+                        if t_ty == "Achat":
+                            net_usd = m_n * get_historical_usd_rate(t_dev, t_d.strftime("%Y-%m-%d"), strict=True)
+                            new_qty = c_qty + t_q
+                            r_pru_usd = round(((c_pru_usd * c_qty) + net_usd) / new_qty, 6) if new_qty > 0 else 0.0
+                        else: r_pru_usd = c_pru_usd
+                        
+                        nr = {"Ticker": t_cl, "Type": t_ty, "Date": t_d.strftime("%d/%m/%Y"), "Quantité": t_q, "Cours": t_c, "Frais": t_f, "Montant Net": m_n, "Devise": t_dev, "PRU (Devise)": r_pru_usd, "Taux change (EUR)": fx}
+                        
+                        append_to_sheet("Transaction", nr)
+                        st.session_state.transactions = pd.concat([st.session_state.transactions, pd.DataFrame([nr])], ignore_index=True)
+                        
+                        df_d = st.session_state.donnees.copy()
+                        if not df_d.index[df_d['Ticker'] == t_cl].tolist():
+                            df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": t_cl, "Type": "₿ Crypto" if is_crypto_ticker(t_cl) else "🛢️ Action", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0, "Devise Cotation": "Auto"}])], ignore_index=True)
+                        idx = df_d.index[df_d['Ticker'] == t_cl].tolist()[0]
+                        df_d.at[idx, "Quantité"] = max(0.0, extraire_nombre(df_d.at[idx, "Quantité"]) + (t_q if t_ty == "Achat" else -t_q))
+                        
+                        if not df_d.index[df_d['Ticker'] == t_dev].tolist():
+                            df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": t_dev, "Type": "💵 Cash", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0, "Devise Cotation": "Auto"}])], ignore_index=True)
+                        i_c = df_d.index[df_d['Ticker'] == t_dev].tolist()[0]
+                        df_d.at[i_c, "Quantité"] = max(0.0, extraire_nombre(df_d.at[i_c, "Quantité"]) + (-m_n if t_ty == "Achat" else m_n))
+                        
+                        st.session_state.donnees = nettoyer_dataframe(df_d); recalculer_totaux_locaux(); save_sheet("Donnees", st.session_state.donnees)
+                        st.success("✅ Transaction enregistrée !"); time.sleep(1); st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
 
     st.divider(); st.subheader("⚖️ Analyse de l'allocation")
     df = st.session_state.donnees
@@ -831,20 +894,25 @@ elif page_choisie == "💰 Fonds":
             d_m = st.date_input("Date ✍️"); t_m = st.radio("Type ✍️", ["Ajout de fond propre", "Retrait"], horizontal=True)
             m_s = st.number_input("Montant ✍️", min_value=0.00, format="%.2f"); d_s = st.selectbox("Devise ✍️", ["$", "€"])
             if st.form_submit_button("Valider"):
-                o_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
-                m_usd = m_s if d_s == "$" else m_s * TAUX_EUR_USD; m_eur = m_s if d_s == "€" else m_s / TAUX_EUR_USD
-                st.session_state.historique = pd.concat([st.session_state.historique, pd.DataFrame([{"Date": d_m.strftime("%d/%m/%Y"), "Type": t_m, "Montant $": m_usd, "Montant €": m_eur, "Montant Or": m_usd/o_px}])], ignore_index=True)
-                save_sheet("Historique", st.session_state.historique)
-                
-                dev = "USD" if d_s == "$" else "EUR"
-                df_d = st.session_state.donnees.copy()
-                if not df_d.index[df_d['Ticker'] == dev].tolist():
-                    df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": dev, "Type": "💵 Cash", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0, "Devise Cotation": "Auto"}])], ignore_index=True)
-                idx_c = df_d.index[df_d['Ticker'] == dev].tolist()[0]
-                df_d.at[idx_c, "Quantité"] = max(0.0, extraire_nombre(df_d.at[idx_c, "Quantité"]) + (m_s if t_m == "Ajout de fond propre" else -m_s))
-                
-                st.session_state.donnees = nettoyer_dataframe(df_d); recalculer_totaux_locaux(); save_sheet("Donnees", st.session_state.donnees)
-                st.success("✅ Mouvement enregistré !"); time.sleep(1); st.rerun()
+                try:
+                    o_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
+                    m_usd = m_s if d_s == "$" else m_s * TAUX_EUR_USD; m_eur = m_s if d_s == "€" else m_s / TAUX_EUR_USD
+                    nl = {"Date": d_m.strftime("%d/%m/%Y"), "Type": t_m, "Montant $": m_usd, "Montant €": m_eur, "Montant Or": m_usd/o_px}
+                    
+                    append_to_sheet("Historique", nl)
+                    st.session_state.historique = pd.concat([st.session_state.historique, pd.DataFrame([nl])], ignore_index=True)
+                    
+                    dev = "USD" if d_s == "$" else "EUR"
+                    df_d = st.session_state.donnees.copy()
+                    if not df_d.index[df_d['Ticker'] == dev].tolist():
+                        df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": dev, "Type": "💵 Cash", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0, "Devise Cotation": "Auto"}])], ignore_index=True)
+                    idx_c = df_d.index[df_d['Ticker'] == dev].tolist()[0]
+                    df_d.at[idx_c, "Quantité"] = max(0.0, extraire_nombre(df_d.at[idx_c, "Quantité"]) + (m_s if t_m == "Ajout de fond propre" else -m_s))
+                    
+                    st.session_state.donnees = nettoyer_dataframe(df_d); recalculer_totaux_locaux(); save_sheet("Donnees", st.session_state.donnees)
+                    st.success("✅ Mouvement enregistré !"); time.sleep(1); st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
     
     afficher_montant_double("Total Apports nets", sum(r["Montant $"] if "ajout" in r["Type"].lower() else -r["Montant $"] for _, r in st.session_state.historique.iterrows()))
     if not st.session_state.historique.empty:
@@ -1033,7 +1101,7 @@ elif page_choisie == "🏛️ Fiscalité":
             use_frais_2 = st.checkbox("Déclarer aux frais réels (Conjoint)", value=bool(int(st.session_state.config.get("f_u2", 0))), key="in_u2", on_change=update_fiscal_config)
             if use_frais_2:
                 km_2 = st.number_input("Kilomètres annuels (Trajet pro) - Conjoint ✍️", min_value=0, value=int(st.session_state.config.get("f_k2", 0)), step=1000, key="in_k2", on_change=update_fiscal_config)
-                cv_2 = st.selectbox("Puissance du véhicule (CV) - Conjoint ✍️", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv2", 5))), key="in_cv2", on_change=update_fiscal_config)
+                cv_2 = st.selectbox("Puissance du véhicule (CV) - Conjoint ✍️", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv1", 5))), key="in_cv2", on_change=update_fiscal_config)
                 repas_2 = st.number_input("Jours de repas au travail - Conjoint ✍️", min_value=0, value=int(st.session_state.config.get("f_r2", 0)), step=10, key="in_r2", on_change=update_fiscal_config)
                 frais_reels_2 = calcul_frais_km(km_2, cv_2) + (repas_2 * float(st.session_state.config.get("frais_repas", 5.35)))
                 st.info(f"💰 Frais Réels estimés (Conjoint) : **{format_smart(frais_reels_2, '€')}**")
