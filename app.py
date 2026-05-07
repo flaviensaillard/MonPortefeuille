@@ -70,7 +70,6 @@ except: TAUX_EUR_USD = 1.0
 # --- 4. FONCTIONS OUTILS & FORMATAGE INTELLIGENT ---
 
 def format_smart(val, symbol="", force_sign=False, is_price=False):
-    """Formate les nombres avec 2 décimales par défaut, et jusqu'à 6 pour les prix/quantités sans zéros inutiles."""
     if pd.isna(val) or str(val).strip() == "": return ""
     try:
         v = float(val)
@@ -278,8 +277,6 @@ def actualiser_cours_internet(silencieux=False):
         for idx, row in df_tmp.iterrows():
             tick = str(row.get("Ticker", "")).strip().upper()
             if tick and tick != "NAN":
-                
-                # --- INTERCEPTION STRICTE DES DEVISES ---
                 if tick == "USD":
                     st.session_state.variations[tick] = "→ 0.00 %"
                     df_tmp.at[idx, "Court"] = "$ 1.00"
@@ -313,7 +310,6 @@ def actualiser_cours_internet(silencieux=False):
                         continue
                     except:
                         pass
-                # -----------------------------------------
 
                 succ_bin = False
                 if tick.endswith("USDT"):
@@ -375,12 +371,18 @@ def actualiser_cours_internet(silencieux=False):
 @st.cache_data(ttl=86400) 
 def recuperer_inflation_france():
     inflation_data = {}
-    
-    # 1. Source Primaire : INSEE (Indice des Prix à la Consommation - Ensemble)
+    # 1. Source Primaire : INSEE avec faux headers de navigateur
     try:
-        req = urllib.request.Request("https://www.insee.fr/fr/statistiques/serie/telecharger/001759970?ordre=chronologique&format=csv", headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            lines = resp.read().decode('utf-8').split('\n')
+        req = urllib.request.Request(
+            "https://www.insee.fr/fr/statistiques/serie/telecharger/001759970?ordre=chronologique&format=csv", 
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7'
+            }
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            lines = resp.read().decode('utf-8', errors='ignore').split('\n')
             
         yearly_indices = {}
         for line in lines:
@@ -388,7 +390,8 @@ def recuperer_inflation_france():
             if len(parts) >= 2 and '-' in parts[0]:
                 try:
                     year = int(parts[0].split('-')[0])
-                    val = float(parts[1].replace(',', '.'))
+                    val_str = parts[1].replace(',', '.').replace('"', '').strip()
+                    val = float(val_str)
                     if year not in yearly_indices:
                         yearly_indices[year] = []
                     yearly_indices[year].append(val)
@@ -403,12 +406,11 @@ def recuperer_inflation_france():
                     avg_y = sum(yearly_indices[y]) / len(yearly_indices[y])
                     avg_prev_y = sum(yearly_indices[prev_y]) / len(yearly_indices[prev_y])
                     inflation = ((avg_y / avg_prev_y) - 1) * 100
-                    # Ne stocker que les données récentes (pour éviter d'écraser l'historique stable si l'INSEE a une base différente)
-                    if y >= 2024:
+                    if y >= 2023:
                         inflation_data[y] = round(inflation, 2)
     except: pass
     
-    # 2. Source Secondaire : Banque Mondiale
+    # 2. Source Secondaire : Banque Mondiale (Fallback)
     try:
         req = urllib.request.Request("https://api.worldbank.org/v2/country/FRA/indicator/FP.CPI.TOTL.ZG?format=json&per_page=20", headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -523,32 +525,34 @@ if "inflation" not in st.session_state:
 
 if "inflation_check_done" not in st.session_state:
     st.session_state.inflation_check_done = True
-    d_inf = recuperer_inflation_france()
-    if d_inf and not st.session_state.projections.empty:
+    d_inf = recuperer_inflation_france() or {}
+    
+    if not st.session_state.projections.empty:
         df_p_tmp = st.session_state.projections.copy()
         df_p_tmp['Date_DT'] = pd.to_datetime(df_p_tmp['Date'], dayfirst=True, errors='coerce')
         ans = df_p_tmp.dropna(subset=['Date_DT'])['Date_DT'].dt.year.unique()
+        
         n_inf = []
         chg = False
         
-        # On va chercher les valeurs actuelles pour les garder si elles sont bonnes
         current_inf_dict = {}
         if not st.session_state.inflation.empty:
             for _, r in st.session_state.inflation.iterrows():
                 current_inf_dict[int(r['Année'])] = r['Inflation (%)']
         
         for a in ans:
-            # L'API dynamique a la priorité
-            if a in d_inf:
-                v_off = d_inf[a]
-            else:
-                v_off = current_inf_dict.get(a, 0.0)
-                
-            v_act = current_inf_dict.get(a, 0.0)
-                
-            if v_off != v_act:
+            v_api = d_inf.get(a, 0.0)
+            v_sheet = current_inf_dict.get(a, 0.0)
+            
+            if v_api == 0.0 and v_sheet != 0.0:
+                v_final = v_sheet
+            elif v_api != 0.0 and v_api != v_sheet:
+                v_final = v_api
                 chg = True
-            n_inf.append({'Année': a, 'Inflation (%)': v_off})
+            else:
+                v_final = v_sheet
+                
+            n_inf.append({'Année': a, 'Inflation (%)': v_final})
             
         if chg:
             st.session_state.inflation = pd.DataFrame(n_inf)
@@ -1366,7 +1370,7 @@ elif page_choisie == "🏛️ Fiscalité":
             use_frais_2 = st.checkbox("Déclarer aux frais réels (Conjoint)", value=bool(int(st.session_state.config.get("f_u2", 0))), key="in_u2", on_change=update_fiscal_config)
             if use_frais_2:
                 km_2 = st.number_input("Kilomètres annuels (Trajet pro) - Conjoint ✍️", min_value=0, max_value=100000, value=int(st.session_state.config.get("f_k2", 0)), step=1000, key="in_k2", on_change=update_fiscal_config)
-                cv_2 = st.selectbox("Puissance du véhicule (CV) - Conjoint ✍️", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv1", 5))), key="in_cv2", on_change=update_fiscal_config)
+                cv_2 = st.selectbox("Puissance du véhicule (CV) - Conjoint ✍️", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv2", 5))), key="in_cv2", on_change=update_fiscal_config)
                 repas_2 = st.number_input("Jours de repas au travail - Conjoint ✍️", min_value=0, max_value=300, value=int(st.session_state.config.get("f_r2", 0)), step=10, key="in_r2", on_change=update_fiscal_config)
                 frais_km_2 = calcul_frais_km(km_2, cv_2)
                 frais_repas_2 = repas_2 * 5.35
