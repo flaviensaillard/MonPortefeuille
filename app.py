@@ -339,7 +339,7 @@ def get_historical_fx(devise, date_val):
     except: pass
     return 1.0
 
-# Formules du Barème Fiscal (Standard ~2024/2025)
+# --- FORMULES FISCALES ---
 def calcul_frais_km(km, cv):
     if cv <= 3:
         if km <= 5000: return km * 0.529
@@ -362,14 +362,34 @@ def calcul_frais_km(km, cv):
         elif km <= 20000: return (km * 0.394) + 1515
         else: return km * 0.470
 
-def calcul_impot_ir(revenu_net_global, parts):
-    qf = revenu_net_global / parts
-    impot = 0
-    if qf > 11294: impot += (min(qf, 28797) - 11294) * 0.11
-    if qf > 28797: impot += (min(qf, 82341) - 28797) * 0.30
-    if qf > 82341: impot += (min(qf, 177106) - 82341) * 0.41
-    if qf > 177106: impot += (qf - 177106) * 0.45
-    return impot * parts
+def calcul_impot_ir(revenu_net_global, nb_parts, statut_matrimonial, apply_decote=True):
+    """Calcule l'impôt sur le revenu brut puis applique la décote et le seuil de recouvrement"""
+    qf = revenu_net_global / nb_parts
+    impot_brut = 0
+    
+    # Barème par tranches
+    if qf > 11294: impot_brut += (min(qf, 28797) - 11294) * 0.11
+    if qf > 28797: impot_brut += (min(qf, 82341) - 28797) * 0.30
+    if qf > 82341: impot_brut += (min(qf, 177106) - 82341) * 0.41
+    if qf > 177106: impot_brut += (qf - 177106) * 0.45
+    
+    impot_brut = impot_brut * nb_parts
+    
+    if apply_decote:
+        if "Célibataire" in statut_matrimonial:
+            if impot_brut <= 2002:
+                decote = 906 - (impot_brut * 0.4525)
+                impot_brut = max(0, impot_brut - decote)
+        else:
+            if impot_brut <= 3300:
+                decote = 1493 - (impot_brut * 0.4525)
+                impot_brut = max(0, impot_brut - decote)
+                
+        # Seuil de recouvrement (Si < 61€, l'état ne prélève pas)
+        if impot_brut < 61:
+            impot_brut = 0.0
+            
+    return impot_brut
 
 # --- 5. CHARGEMENT INITIAL (DEPUIS LE CLOUD) ---
 if "variations" not in st.session_state: st.session_state.variations = {}
@@ -790,8 +810,7 @@ elif page_choisie == "💰 Fonds":
             if st.form_submit_button("Valider"):
                 or_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
                 m_usd = m_s if d_s == "$" else m_s * TAUX_EUR_USD
-                m_eur = m_s if d_s == "€" else m_s / TAUX_EUR_USD
-                nl = {"Date": d_m.strftime("%d/%m/%Y"), "Type": t_m, "Montant $": m_usd, "Montant €": m_eur, "Montant Or": m_usd/or_px}
+                nl = {"Date": d_m.strftime("%d/%m/%Y"), "Type": t_m, "Montant $": m_usd, "Montant €": m_usd/TAUX_EUR_USD, "Montant Or": m_usd/float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))}
                 st.session_state.historique = pd.concat([df_h, pd.DataFrame([nl])], ignore_index=True)
                 save_sheet("Historique", st.session_state.historique)
                 if t_m == "Ajout de fond propre":
@@ -1042,50 +1061,50 @@ elif page_choisie == "🏛️ Fiscalité":
     with c_sit1:
         statut = st.radio("Situation matrimoniale ✍️", ["Célibataire / Divorcé(e) / Veuf(ve)", "Marié(e) / Pacsé(e)"])
         enfants = st.number_input("Nombre d'enfants à charge ✍️", min_value=0, max_value=10, value=0, step=1)
+    
+    mariage_actif = "Marié" in statut
+
     with c_sit2:
-        salaire_1 = st.number_input("Vos revenus nets imposables (Salaires, etc.) en € ✍️", min_value=0.0, value=30000.0, step=1000.0)
+        st.markdown("**Vos revenus nets imposables (Vous)**")
+        salaire_1 = st.number_input("Salaires, etc. en € (Déclarant 1) ✍️", min_value=0.0, value=30000.0, step=1000.0)
         salaire_2 = 0.0
-        if "Marié" in statut:
-            salaire_2 = st.number_input("Revenus nets imposables conjoint(e) en € ✍️", min_value=0.0, value=30000.0, step=1000.0)
+        if mariage_actif:
+            st.markdown("**Vos revenus nets imposables (Conjoint)**")
+            salaire_2 = st.number_input("Salaires, etc. en € (Déclarant 2) ✍️", min_value=0.0, value=0.0, step=1000.0)
         salaire_total = salaire_1 + salaire_2
 
     st.markdown("---")
     st.markdown("#### 🚗 Frais Professionnels (Frais Réels)")
-    use_frais_reels = st.checkbox("Déclarer aux frais réels (Calcul précis au lieu de l'abattement standard de 10%)")
-    frais_reels = 0.0
+    st.write("Le logiciel calculera automatiquement si la déduction de vos frais réels est plus avantageuse que l'abattement standard de 10 %.")
     
-    if use_frais_reels:
-        c_frais1, c_frais2, c_frais3 = st.columns(3)
-        km = c_frais1.number_input("Kilomètres annuels (Trajet pro) ✍️", min_value=0, max_value=100000, value=0, step=1000)
-        cv = c_frais2.selectbox("Puissance du véhicule (CV) ✍️", [3, 4, 5, 6, 7], help="7 correspond à 7 CV et plus.")
-        repas = c_frais3.number_input("Jours de repas au travail ✍️", min_value=0, max_value=300, value=0, step=10)
+    col_f1, col_f2 = st.columns(2)
+    
+    # Frais Réels Déclarant 1
+    with col_f1:
+        use_frais_1 = st.checkbox("Déclarer aux frais réels (Vous)")
+        frais_reels_1 = 0.0
+        if use_frais_1:
+            km_1 = st.number_input("Kilomètres annuels (Trajet pro) - Vous ✍️", min_value=0, max_value=100000, value=0, step=1000)
+            cv_1 = st.selectbox("Puissance du véhicule (CV) - Vous ✍️", [3, 4, 5, 6, 7], help="7 correspond à 7 CV et plus.")
+            repas_1 = st.number_input("Jours de repas au travail - Vous ✍️", min_value=0, max_value=300, value=0, step=10)
+            frais_km_1 = calcul_frais_km(km_1, cv_1)
+            frais_repas_1 = repas_1 * 5.35
+            frais_reels_1 = frais_km_1 + frais_repas_1
+            st.info(f"💰 Frais Réels estimés (Vous) : **{frais_reels_1:,.2f} €**")
 
-        # Calcul Barème kilométrique
-        frais_km = 0.0
-        if cv <= 3:
-            if km <= 5000: frais_km = km * 0.529
-            elif km <= 20000: frais_km = (km * 0.316) + 1065
-            else: frais_km = km * 0.370
-        elif cv == 4:
-            if km <= 5000: frais_km = km * 0.606
-            elif km <= 20000: frais_km = (km * 0.340) + 1330
-            else: frais_km = km * 0.407
-        elif cv == 5:
-            if km <= 5000: frais_km = km * 0.636
-            elif km <= 20000: frais_km = (km * 0.357) + 1395
-            else: frais_km = km * 0.427
-        elif cv == 6:
-            if km <= 5000: frais_km = km * 0.665
-            elif km <= 20000: frais_km = (km * 0.374) + 1457
-            else: frais_km = km * 0.447
-        else:
-            if km <= 5000: frais_km = km * 0.697
-            elif km <= 20000: frais_km = (km * 0.394) + 1515
-            else: frais_km = km * 0.470
-            
-        frais_repas = repas * 5.35 # Valeur forfaitaire standard DGFIP
-        frais_reels = frais_km + frais_repas
-        st.info(f"💰 Estimation de vos Frais Réels déductibles : **{frais_reels:,.2f} €** (Km: {frais_km:,.2f} € + Repas: {frais_repas:,.2f} €)")
+    # Frais Réels Déclarant 2
+    frais_reels_2 = 0.0
+    if mariage_actif:
+        with col_f2:
+            use_frais_2 = st.checkbox("Déclarer aux frais réels (Conjoint)")
+            if use_frais_2:
+                km_2 = st.number_input("Kilomètres annuels (Trajet pro) - Conjoint ✍️", min_value=0, max_value=100000, value=0, step=1000)
+                cv_2 = st.selectbox("Puissance du véhicule (CV) - Conjoint ✍️", [3, 4, 5, 6, 7])
+                repas_2 = st.number_input("Jours de repas au travail - Conjoint ✍️", min_value=0, max_value=300, value=0, step=10)
+                frais_km_2 = calcul_frais_km(km_2, cv_2)
+                frais_repas_2 = repas_2 * 5.35
+                frais_reels_2 = frais_km_2 + frais_repas_2
+                st.info(f"💰 Frais Réels estimés (Conjoint) : **{frais_reels_2:,.2f} €**")
 
     st.divider()
 
@@ -1135,7 +1154,7 @@ elif page_choisie == "🏛️ Fiscalité":
 
     df_fiscal = pd.DataFrame(rapport_fiscal)
 
-    st.subheader(f"📝 2. Détail des Ventes (Année {annee_fiscale})")
+    st.subheader(f"📝 2. Détail des Ventes Boursières (Année {annee_fiscale})")
     
     if df_fiscal.empty:
         st.info(f"Aucune cession d'actifs (actions ou cryptos) détectée dans la feuille 'Transaction' pour l'année {annee_fiscale}.")
@@ -1179,40 +1198,24 @@ elif page_choisie == "🏛️ Fiscalité":
 
     st.divider()
 
-    # --- CALCULS FISCAUX ---
+    # --- CALCULS FISCAUX GLOBAUX ---
     parts = 1.0 if "Célibataire" in statut else 2.0
     if enfants == 1: parts += 0.5
     elif enfants == 2: parts += 1.0
     elif enfants >= 3: parts += 1.0 + (enfants - 2)
 
-    # Détermination du revenu imposable (Abattement 10% ou Frais réels)
-    abattement_10 = salaire_total * 0.10
-    deduction_appliquee = max(abattement_10, frais_reels)
-    revenu_base_net = salaire_total - deduction_appliquee
-
-    def calcul_impot_ir(revenu_net_global, nb_parts):
-        qf = revenu_net_global / nb_parts
-        impot = 0
-        if qf > 11294: impot += (min(qf, 28797) - 11294) * 0.11
-        if qf > 28797: impot += (min(qf, 82341) - 28797) * 0.30
-        if qf > 82341: impot += (min(qf, 177106) - 82341) * 0.41
-        if qf > 177106: impot += (qf - 177106) * 0.45
-        return impot * nb_parts
-
-    impot_salaires_seuls = calcul_impot_ir(revenu_base_net, parts)
+    # Détermination du revenu net imposable INDIVIDUEL (Abattement 10% vs Frais réels)
+    deduction_1 = max(salaire_1 * 0.10, frais_reels_1)
+    deduction_2 = max(salaire_2 * 0.10, frais_reels_2)
     
-    # Calcul du TMI sur les salaires seuls
-    qf_base = revenu_base_net / parts
-    if qf_base <= 11294: tmi = 0
-    elif qf_base <= 28797: tmi = 11
-    elif qf_base <= 82341: tmi = 30
-    elif qf_base <= 177106: tmi = 41
-    else: tmi = 45
+    revenu_net_1 = salaire_1 - deduction_1
+    revenu_net_2 = salaire_2 - deduction_2
+    revenu_base_net_global = revenu_net_1 + revenu_net_2
 
-    taux_pas = (impot_salaires_seuls / salaire_total * 100) if salaire_total > 0 else 0.0
-    mensualite = impot_salaires_seuls / 12.0
-
-    st.subheader("💡 3. Recommandation d'imposition (Actions/ETF) et Bilan Global")
+    # Impôt sur les salaires uniquement
+    impot_salaires_seuls = calcul_impot_ir(revenu_base_net_global, parts, statut, apply_decote=True)
+    
+    st.subheader("💡 3. Recommandation d'imposition & Prélèvement à la Source")
     
     if df_fiscal.empty or (plus_values_actions == 0 and moins_values_actions == 0):
         choix = "Aucun"
@@ -1228,7 +1231,7 @@ elif page_choisie == "🏛️ Fiscalité":
         cout_pfu = bilan_net_actions * 0.30
         
         # Barème Progressif
-        impot_avec_bourse = calcul_impot_ir(revenu_base_net + bilan_net_actions, parts)
+        impot_avec_bourse = calcul_impot_ir(revenu_base_net_global + bilan_net_actions, parts, statut, apply_decote=True)
         surcout_ir = impot_avec_bourse - impot_salaires_seuls
         prelevements_sociaux = bilan_net_actions * 0.172
         cout_bareme = surcout_ir + prelevements_sociaux
@@ -1236,25 +1239,41 @@ elif page_choisie == "🏛️ Fiscalité":
         taux_moyen_bareme = (cout_bareme / bilan_net_actions) * 100
 
         if cout_bareme < cout_pfu:
-            st.success("✅ **Le Barème Progressif est plus avantageux pour vous !**")
+            st.success("✅ **Le Barème Progressif est plus avantageux pour vos plus-values !**")
             st.write(f"Sur vos {bilan_net_actions:,.2f} € de plus-values nettes :")
             st.write(f"- Avec la Flat Tax (30%) : l'impôt serait de **{cout_pfu:,.2f} €**.")
             st.write(f"- Avec le Barème : l'impôt est de **{cout_bareme:,.2f} €** *(Taux d'imposition effectif sur vos plus-values : {taux_moyen_bareme:.1f} %)*.")
             choix = "Barème"
         else:
-            st.success("✅ **La Flat Tax (PFU) est plus avantageuse pour vous !**")
+            st.success("✅ **La Flat Tax (PFU) est plus avantageuse pour vos plus-values !**")
             st.write(f"Sur vos {bilan_net_actions:,.2f} € de plus-values nettes :")
-            st.write(f"- Avec le Barème, la hausse de vos revenus vous ferait basculer dans les tranches hautes, l'impôt serait de **{cout_bareme:,.2f} €** *(Taux d'imposition effectif sur vos plus-values : {taux_moyen_bareme:.1f} %)*.")
+            st.write(f"- Avec le Barème, la hausse de vos revenus vous ferait basculer dans les tranches hautes, l'impôt serait de **{cout_bareme:,.2f} €**.")
             st.write(f"- Avec la Flat Tax : l'impôt est plafonné à **{cout_pfu:,.2f} €** (Exactement 30%).")
             choix = "PFU"
 
+    # --- CALCUL DES TAUX DE PRÉLÈVEMENT À LA SOURCE (PAS) ---
+    taux_commun = (impot_salaires_seuls / salaire_total * 100) if salaire_total > 0 else 0.0
+    mensualite_foyer = impot_salaires_seuls / 12.0
+
+    # Taux personnalisé (Déclarant 1) : Impôt théorique sans enfant ni décote sur son seul revenu net
+    impot_theorique_1 = calcul_impot_ir(revenu_net_1, 1.0, "Célibataire", apply_decote=False)
+    taux_perso_1 = (impot_theorique_1 / salaire_1 * 100) if salaire_1 > 0 else 0.0
+    mensualite_perso_1 = (salaire_1 * (taux_perso_1 / 100)) / 12.0
+
     st.markdown("#### 📌 Bilan de vos impôts globaux estimés")
-    st.markdown(f"- **Taux de Prélèvement à la Source (PAS) estimé :** {taux_pas:.1f} %")
-    st.markdown(f"- **Impôt sur les revenus (Salaires) :** {impot_salaires_seuls:,.2f} € par an, soit **{mensualite:,.2f} € / mois** prélevés sur vos salaires.")
+    st.write(f"L'impôt total de votre foyer sur les salaires s'élève à **{impot_salaires_seuls:,.2f} € / an**.")
+    
+    col_taux1, col_taux2 = st.columns(2)
+    with col_taux1:
+        st.info(f"👨‍👩‍👧‍👦 **Option 1 : Le Taux Commun**\n\nLe taux unique appliqué aux deux membres du foyer.\n\n**Taux estimé : {taux_commun:.1f} %**")
+    
+    if mariage_actif:
+        with col_taux2:
+            st.success(f"👤 **Option 2 : Le Taux Personnalisé (Vous)**\n\nLe taux propre à votre salaire brut.\n\n**Votre Taux : {taux_perso_1:.1f} %**\n\n*(Prélevé sur votre salaire : {mensualite_perso_1:,.2f} € / mois)*")
     
     if bilan_net_actions > 0:
         impot_bourse = cout_bareme if choix == "Barème" else cout_pfu
-        st.markdown(f"- **Impôt supplémentaire à payer sur vos plus-values boursières :** **{impot_bourse:,.2f} €** *(Ce montant n'est pas prélevé chaque mois, il sera à régler en une fois, généralement en septembre de l'année suivante).*")
+        st.markdown(f"> ⚠️ **Attention :** L'impôt supplémentaire sur vos plus-values boursières (**{impot_bourse:,.2f} €**) n'est pas prélevé tous les mois. Il sera à régler en une fois lors de la régularisation de septembre.")
 
     st.divider()
     st.subheader("📝 4. Résumé pour votre déclaration d'impôts")
