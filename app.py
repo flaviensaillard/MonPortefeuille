@@ -67,7 +67,7 @@ def extraire_nombre(valeur):
     nettoye = re.sub(r'[^\d,.-]', '', str(valeur))
     if ',' in nettoye and '.' in nettoye: nettoye = nettoye.replace(',', '')
     elif ',' in nettoye: nettoye = nettoye.replace(',', '.')
-    try: return round(float(nettoye), 5)
+    try: return float(nettoye)
     except: return 0.0
 
 def save_config_param(key, value):
@@ -91,31 +91,51 @@ def nettoyer_dataframe(df):
     cols_finales = ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)"]
     for col in df.columns:
         if "quantit" in str(col).lower() or "qte" in str(col).lower(): df.rename(columns={col: "Quantité"}, inplace=True)
-    
     if "Type" not in df.columns:
         df["Type"] = ""
         for idx, row in df.iterrows():
             tick = str(row.get("Ticker", "")).upper()
-            df.at[idx, "Type"] = "💵 Cash" if est_devise_liquide(tick) else "₿ Crypto" if any(c in tick for c in ["BTC", "ETH", "USDT"]) else "🛢️ Action"
+            df.at[idx, "Type"] = "Cash" if est_devise_liquide(tick) else "Crypto" if any(c in tick for c in ["BTC", "ETH", "USDT"]) else "Action"
     else:
-        for idx, row in df.iterrows():
-            val_type = str(row.get("Type", "")).strip()
-            if val_type == "Action": df.at[idx, "Type"] = "🛢️ Action"
-            elif val_type == "Obligation": df.at[idx, "Type"] = "📜 Obligation"
-            elif val_type == "Or": df.at[idx, "Type"] = "💰 Or"
-            elif val_type == "Crypto": df.at[idx, "Type"] = "₿ Crypto"
-            elif val_type == "Cash": df.at[idx, "Type"] = "💵 Cash"
-            elif val_type == "Cash réserve": df.at[idx, "Type"] = "🏦 Cash réserve"
+        # Nettoyage des emojis existants dans la base pour éviter les bugs
+        df["Type"] = df["Type"].astype(str).str.replace(r'[^\w\s]', '', regex=True).str.strip()
             
     for col in cols_finales:
-        if col not in df.columns:
-            df[col] = 0.0 if col in ["Quantité", "Pourcentage (%)"] else ("$ 0.00" if col in ["Court", "Valeur totale"] else "")
-            
-    # Forçage numérique pour éviter l'erreur NumberColumn de Streamlit
+        if col not in df.columns: df[col] = 0.0 if col == "Pourcentage (%)" else ("$ 0.00" if col in ["Court", "Valeur totale"] else "")
+    
+    # Nettoyage strict des nombres (corrige l'erreur de Streamlit "cannot be interpreted as a number")
     if "Quantité" in df.columns: df["Quantité"] = df["Quantité"].apply(extraire_nombre)
     if "Pourcentage (%)" in df.columns: df["Pourcentage (%)"] = df["Pourcentage (%)"].apply(extraire_nombre)
         
     return df[cols_finales].reset_index(drop=True)
+
+def get_pru_and_qty(ticker, df_transactions):
+    df_tick = df_transactions[df_transactions['Ticker'] == ticker].copy()
+    if df_tick.empty:
+        return 0.0, 0.0
+    if 'Date_DT' not in df_tick.columns:
+        df_tick['Date_DT'] = pd.to_datetime(df_tick['Date'], dayfirst=True, errors='coerce')
+    df_tick = df_tick.dropna(subset=['Date_DT']).sort_values('Date_DT')
+    
+    t_cost = 0.0
+    t_qty = 0.0
+    for _, r in df_tick.iterrows():
+        typ = str(r['Type']).lower()
+        qte = extraire_nombre(r['Quantité'])
+        net = extraire_nombre(r['Montant Net'])
+        if "achat" in typ:
+            t_cost += net
+            t_qty += qte
+        elif "vente" in typ:
+            pru_instant = t_cost / t_qty if t_qty > 0 else 0.0
+            t_cost -= pru_instant * qte
+            t_qty -= qte
+            if t_qty <= 0.000001: 
+                t_cost = 0.0
+                t_qty = 0.0
+                
+    final_pru = t_cost / t_qty if t_qty > 0 else 0.0
+    return round(final_pru, 5), round(t_qty, 5)
 
 def recalculer_toute_la_base_projections(df):
     if df is None or df.empty: return df
@@ -157,33 +177,9 @@ def recalculer_totaux_locaux():
         df = st.session_state.donnees.copy()
         for idx, row in df.iterrows():
             c, q = extraire_nombre(row.get("Court", 0)), extraire_nombre(row.get("Quantité", 0))
-            df.at[idx, "Quantité"] = q
             df.at[idx, "Valeur totale"] = f"$ {round(c * q, 2):,.2f}"
             df.at[idx, "Court"] = f"$ {c:.2f}"
         st.session_state.donnees = df
-
-def calculer_metriques_jour(df_actuel, variations):
-    val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
-    val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
-    somme_p = sum(extraire_nombre(r["Pourcentage (%)"]) for _, r in df_actuel.iterrows())
-    
-    v_jour_tg_usd = val_tot_veille = v_jour_strat_usd = val_inv_veille = 0.0
-    for _, r in df_actuel.iterrows():
-        tick = str(r.get("Ticker", "")).strip().upper()
-        v_act = extraire_nombre(r["Valeur totale"])
-        match = re.search(r'([+-]?\d+\.?\d*)', variations.get(tick, "0"))
-        v_pct = float(match.group(1)) if match else 0.0
-        v_veil = v_act / (1 + v_pct / 100) if (1 + v_pct / 100) != 0 else v_act
-        
-        v_jour_tg_usd += (v_act - v_veil)
-        val_tot_veille += v_veil
-        if extraire_nombre(r["Pourcentage (%)"]) > 0:
-            v_jour_strat_usd += (v_act - v_veil)
-            val_inv_veille += v_veil
-            
-    pct_jour_tg = (v_jour_tg_usd / val_tot_veille * 100) if val_tot_veille > 0 else 0.0
-    pct_jour_strat = (v_jour_strat_usd / val_inv_veille * 100) if val_inv_veille > 0 else 0.0
-    return val_invest, val_total, somme_p, v_jour_tg_usd, pct_jour_tg, v_jour_strat_usd, pct_jour_strat
 
 def actualiser_cours_internet(silencieux=False):
     if "donnees" in st.session_state:
@@ -209,7 +205,7 @@ def actualiser_cours_internet(silencieux=False):
                                 changement = succ_bin = True
                                 break 
                         except: continue 
-                    if succ_bin: continue 
+                if succ_bin: continue 
 
                 tick_yf = tick.replace("USDT", "-USD") if (tick.endswith("USDT") and not succ_bin) else tick
                 try:
@@ -276,34 +272,6 @@ def get_historical_fx(devise, date_val):
         if not h_fb.empty: return float(h_fb['Close'].iloc[-1])
     except: pass
     return 1.0
-
-def get_pru_and_qty(ticker, df_transactions):
-    df_tick = df_transactions[df_transactions['Ticker'] == ticker].copy()
-    if df_tick.empty:
-        return 0.0, 0.0
-    if 'Date_DT' not in df_tick.columns:
-        df_tick['Date_DT'] = pd.to_datetime(df_tick['Date'], dayfirst=True, errors='coerce')
-    df_tick = df_tick.dropna(subset=['Date_DT']).sort_values('Date_DT')
-    
-    total_cost = 0.0
-    total_qty = 0.0
-    for _, r in df_tick.iterrows():
-        typ = str(r['Type']).lower()
-        qte = extraire_nombre(r['Quantité'])
-        net = extraire_nombre(r['Montant Net'])
-        if "achat" in typ:
-            total_cost += net
-            total_qty += qte
-        elif "vente" in typ:
-            pru_instant = total_cost / total_qty if total_qty > 0 else 0.0
-            total_cost -= pru_instant * qte
-            total_qty -= qte
-            if total_qty <= 0.000001: 
-                total_cost = 0.0
-                total_qty = 0.0
-                
-    final_pru = total_cost / total_qty if total_qty > 0 else 0.0
-    return round(final_pru, 5), round(total_qty, 5)
 
 def calcul_frais_km(km, cv):
     coefs = {3:(0.529, 0.316, 1065, 0.370), 4:(0.606, 0.340, 1330, 0.407), 5:(0.636, 0.357, 1395, 0.427), 6:(0.665, 0.374, 1457, 0.447), 7:(0.697, 0.394, 1515, 0.470)}
@@ -387,11 +355,32 @@ if st.sidebar.button("🔄 Recharger l'application", use_container_width=True):
 # --- 7. PAGES DE L'APPLICATION ---
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
-    df_actuel, df_p = st.session_state.donnees, st.session_state.projections
     
-    val_invest, val_total, somme_p, v_jour_tg_usd, p_jour_tg, v_jour_strat_usd, p_jour_strat = calculer_metriques_jour(df_actuel, st.session_state.variations)
+    df_actuel = st.session_state.donnees
+    df_p = st.session_state.projections
+    
+    val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
+    val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
+    somme_p = sum(extraire_nombre(r["Pourcentage (%)"]) for _, r in df_actuel.iterrows())
+    
+    var_jour_tg_usd = val_tot_veille = var_jour_strat_usd = val_inv_veille = 0.0
+    for _, r in df_actuel.iterrows():
+        tick = str(r.get("Ticker", "")).strip().upper()
+        v_act = extraire_nombre(r["Valeur totale"])
+        match = re.search(r'([+-]?\d+\.?\d*)', st.session_state.variations.get(tick, "0"))
+        v_pct = float(match.group(1)) if match else 0.0
+        v_veil = v_act / (1 + v_pct / 100) if (1 + v_pct / 100) != 0 else v_act
+        
+        var_jour_tg_usd += (v_act - v_veil)
+        val_tot_veille += v_veil
+        if extraire_nombre(r["Pourcentage (%)"]) > 0:
+            var_jour_strat_usd += (v_act - v_veil)
+            val_inv_veille += v_veil
+            
+    pct_jour_tg = (var_jour_tg_usd / val_tot_veille * 100) if val_tot_veille > 0 else 0.0
+    pct_jour_strat = (var_jour_strat_usd / val_inv_veille * 100) if val_inv_veille > 0 else 0.0
+
     cap_actuel = sum(r["Montant $"] if "ajout" in r["Type"].lower() else -r["Montant $"] for _, r in st.session_state.historique.iterrows())
-    
     df_p_live = pd.concat([df_p, pd.DataFrame([{"Date": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "Capital investi": cap_actuel, "Actifs Stratégiques": val_invest, "Total Global": val_total}])], ignore_index=True)
     df_p_live = recalculer_toute_la_base_projections(df_p_live)
     
@@ -425,7 +414,7 @@ if page_choisie == "📊 Tableau de bord":
     c_tg, _ = st.columns(2)
     with c_tg:
         afficher_montant_double("Total Global", val_total, f"{delta_tg:+,.2f} $ ({p_delta_tg:+.2f} % sur 1 an glissant)")
-        st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if v_jour_tg_usd>=0 else '📉'} Aujourd'hui : <strong style='color:{'#2ecc71' if v_jour_tg_usd>=0 else '#e74c3c'}'>{v_jour_tg_usd:+,.2f} $ ({p_jour_tg:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if var_jour_tg_usd>=0 else '📉'} Aujourd'hui : <strong style='color:{'#2ecc71' if var_jour_tg_usd>=0 else '#e74c3c'}'>{var_jour_tg_usd:+,.2f} $ ({pct_jour_tg:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
     st.write("")
 
     if not df_p.empty:
@@ -471,7 +460,7 @@ if page_choisie == "📊 Tableau de bord":
             df_p_tg['Val'] = df_p_tg['Valeur totale'].apply(extraire_nombre)
             df_pie_tg = df_p_tg[df_p_tg['Val']>0].groupby('Type')['Val'].sum().reset_index()
             if not df_pie_tg.empty:
-                fig_tg = px.pie(df_pie_tg, values='Val', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or": "#f1c40f", "₿ Crypto": "#9b59b6", "💵 Cash": "#2ecc71", "🏦 Cash réserve": "#f39c12"}, hole=0.4)
+                fig_tg = px.pie(df_pie_tg, values='Val', names='Type', color='Type', color_discrete_map={"Action": "#e74c3c", "Obligation": "#3498db", "Or": "#f1c40f", "Crypto": "#9b59b6", "Cash": "#2ecc71", "Cash réserve": "#f39c12"}, hole=0.4)
                 fig_tg.update_traces(textposition='inside', textinfo='percent+label')
                 fig_tg.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
                 st.plotly_chart(fig_tg, use_container_width=True)
@@ -482,7 +471,7 @@ if page_choisie == "📊 Tableau de bord":
     c_st, _ = st.columns(2)
     with c_st:
         afficher_montant_double("Actifs Stratégiques", val_invest, f"{delta:+,.2f} $ ({p_delta:+.2f} % sur 1 an glissant)")
-        st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if v_jour_strat_usd>=0 else '📉'} Aujourd'hui : <strong style='color:{'#2ecc71' if v_jour_strat_usd>=0 else '#e74c3c'}'>{v_jour_strat_usd:+,.2f} $ ({p_jour_strat:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if var_jour_strat_usd>=0 else '📉'} Aujourd'hui : <strong style='color:{'#2ecc71' if var_jour_strat_usd>=0 else '#e74c3c'}'>{var_jour_strat_usd:+,.2f} $ ({pct_jour_strat:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
     st.write("") 
     
     if df_p.empty: st.info("Aucune donnée.")
@@ -513,7 +502,8 @@ if page_choisie == "📊 Tableau de bord":
                     st.metric("Score TWR Stratégique (%)", f"{df_v_s['Score TWR %'].iloc[-1]:+.2f} %", f"{twr_p:+.2f} % (sur la période)")
                     afficher_montant_double("Gains nets actuels", df_v_s['Evolution cumulée $'].iloc[-1], taille="medium")
             with cg2:
-                fig_ls = px.line(df_v_s.reset_index(), x='Date_DT', y='Evolution cumulée $' if "ROI" in m_s else 'Score TWR %')
+                col_y = 'Evolution cumulée $' if "ROI" in m_s else 'Score TWR %'
+                fig_ls = px.line(df_v_s.reset_index(), x='Date_DT', y=col_y)
                 fig_ls.update_traces(line_shape='spline')
                 fig_ls.update_layout(xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0))
                 fig_ls.update_yaxes(zeroline=False, rangemode="normal")
@@ -529,7 +519,7 @@ if page_choisie == "📊 Tableau de bord":
         st.markdown("*Classes d'actifs ciblées*")
         d_p1 = df_st[df_st['Val']>0].groupby('Type')['Val'].sum().reset_index()
         if not d_p1.empty:
-            f1 = px.pie(d_p1, values='Val', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or": "#f1c40f", "₿ Crypto": "#9b59b6", "💵 Cash": "#2ecc71", "🏦 Cash réserve": "#f39c12"}, hole=0.4)
+            f1 = px.pie(d_p1, values='Val', names='Type', color='Type', color_discrete_map={"Action": "#e74c3c", "Obligation": "#3498db", "Or": "#f1c40f", "Crypto": "#9b59b6", "Cash": "#2ecc71", "Cash réserve": "#f39c12"}, hole=0.4)
             f1.update_traces(textposition='inside', textinfo='percent+label')
             f1.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
             st.plotly_chart(f1, use_container_width=True)
@@ -556,15 +546,33 @@ elif page_choisie == "📋 Liste des actifs":
     st.write("Modifiez l'allocation cible de vos actifs ici. **La colonne Quantité est verrouillée pour vos investissements** et se met à jour via l'onglet 'Rééquilibrage'.")
     
     df_actuel = st.session_state.donnees.copy()
-    val_invest, val_total, somme_p, v_jour_tg_usd, p_jour_tg, v_jour_strat_usd, p_jour_strat = calculer_metriques_jour(df_actuel, st.session_state.variations)
+    
+    # Recalcul manuel pour ce bloc pour éviter le tuple de "calculer_metriques_jour" trop long
+    val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
+    val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
+    somme_p = sum(extraire_nombre(r["Pourcentage (%)"]) for _, r in df_actuel.iterrows())
+    
+    v_jour_tg_usd = val_tot_veille = v_jour_strat_usd = val_inv_veille = 0.0
+    for _, r in df_actuel.iterrows():
+        tick = str(r.get("Ticker", "")).strip().upper()
+        v_act = extraire_nombre(r["Valeur totale"])
+        match = re.search(r'([+-]?\d+\.?\d*)', st.session_state.variations.get(tick, "0"))
+        v_pct = float(match.group(1)) if match else 0.0
+        v_veil = v_act / (1 + v_pct / 100) if (1 + v_pct / 100) != 0 else v_act
+        v_jour_tg_usd += (v_act - v_veil); val_tot_veille += v_veil
+        if extraire_nombre(r["Pourcentage (%)"]) > 0:
+            v_jour_strat_usd += (v_act - v_veil); val_inv_veille += v_veil
+            
+    pct_jour_tg = (v_jour_tg_usd / val_tot_veille * 100) if val_tot_veille > 0 else 0.0
+    pct_jour_strat = (v_jour_strat_usd / val_inv_veille * 100) if val_inv_veille > 0 else 0.0
 
     c1, c2, c3 = st.columns(3)
     with c1:
         afficher_montant_double("Actifs Stratégiques", val_invest)
-        st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if v_jour_strat_usd>=0 else '📉'} Aujourd'hui : <strong style='color:{'#2ecc71' if v_jour_strat_usd>=0 else '#e74c3c'}'>{v_jour_strat_usd:+,.2f} $ ({p_jour_strat:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if v_jour_strat_usd>=0 else '📉'} Aujourd'hui : <strong style='color:{'#2ecc71' if v_jour_strat_usd>=0 else '#e74c3c'}'>{v_jour_strat_usd:+,.2f} $ ({pct_jour_strat:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
     with c2:
         afficher_montant_double("Total Global", val_total)
-        st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if v_jour_tg_usd>=0 else '📉'} Aujourd'hui : <strong style='color:{'#2ecc71' if v_jour_tg_usd>=0 else '#e74c3c'}'>{v_jour_tg_usd:+,.2f} $ ({p_jour_tg:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if v_jour_tg_usd>=0 else '📉'} Aujourd'hui : <strong style='color:{'#2ecc71' if v_jour_tg_usd>=0 else '#e74c3c'}'>{v_jour_tg_usd:+,.2f} $ ({pct_jour_tg:+.2f} %)</strong></span></div>", unsafe_allow_html=True)
     with c3:
         ec = round(100 - somme_p, 2)
         st.markdown(f"<div style='margin-bottom:0.8rem;'><div style='font-size:0.9rem; opacity:0.8; margin-bottom:0.2rem;'>Répartition Cible</div><div style='font-size:1.8rem; font-weight:600; line-height:1.2;'>{somme_p:.2f} %</div><div style='font-size:0.9rem; font-weight:600; color:{'#2ecc71' if ec==0 else '#e74c3c'}; padding-top:0.2rem;'>{'✅ Cible atteinte' if ec==0 else f'⚠️ {abs(ec):.2f} % manquant/en trop'}</div></div>", unsafe_allow_html=True)
@@ -576,36 +584,42 @@ elif page_choisie == "📋 Liste des actifs":
 
     df_actuel['Var. Jour 🔒'] = df_actuel['Ticker'].apply(lambda x: st.session_state.variations.get(str(x).upper(), "→ 0.00 %"))
 
+    # Configs sans emoji dans les clés, emoji autorisés dans les options
     c_act_locked = {
         "Ticker": st.column_config.TextColumn("Ticker ✍️"),
-        "Type": st.column_config.SelectboxColumn("Type ✍️", options=["🛢️ Action", "📜 Obligation", "💰 Or", "₿ Crypto", "💵 Cash", "🏦 Cash réserve"]),
+        "Type": st.column_config.SelectboxColumn("Type ✍️", options=["Action", "Obligation", "Or", "Crypto", "Cash", "Cash réserve"]),
         "Court": st.column_config.TextColumn("Court 🔒", disabled=True),
         "Quantité": st.column_config.NumberColumn("Quantité 🔒", disabled=True, format="%.5f"),
         "Valeur totale": st.column_config.TextColumn("Valeur totale 🔒", disabled=True),
-        "Pourcentage (%)": st.column_config.NumberColumn("Pourcentage (%) ✍️", format="%.2f%%"),
+        "Pourcentage (%)": st.column_config.NumberColumn("Pourcentage (%) ✍️", format="%.2f %%"),
         "Var. Jour 🔒": st.column_config.TextColumn("Var. Jour 🔒", disabled=True)
     }
     
     c_act_unlocked = c_act_locked.copy()
     c_act_unlocked["Quantité"] = st.column_config.NumberColumn("Quantité ✍️", disabled=False, format="%.5f")
     
-    def c_var(v): return 'color:#2ecc71' if "↗" in str(v) or "+" in str(v) else ('color:#e74c3c' if "↘" in str(v) or "-" in str(v) else 'color:#95a5a6')
+    def c_var(v):
+        if "↗" in str(v) or "+" in str(v): return 'color:#2ecc71'
+        if "↘" in str(v) or "-" in str(v): return 'color:#e74c3c'
+        return 'color:#95a5a6'
+        
     d_c = ["Ticker", "Type", "Court", "Quantité", "Valeur totale", "Pourcentage (%)", "Var. Jour 🔒"]
     
-    m_dev = df_actuel.apply(lambda r: est_devise_liquide(r.get("Ticker", "")), axis=1)
+    m_dev = df_actuel['Type'].astype(str).str.contains("Cash", na=False)
     
     st.markdown("### 📈 Actifs d'Investissement")
     st.caption("La colonne Quantité est verrouillée : elle se met à jour automatiquement via vos transactions.")
-    r_i = st.data_editor(df_actuel[~m_dev][d_c].style.map(c_var, subset=["Var. Jour 🔒"]), key="ei", column_config=c_act_locked, use_container_width=True, hide_index=True, num_rows="dynamic")
+    res_i = st.data_editor(df_actuel[~m_dev][d_c].style.map(c_var, subset=["Var. Jour 🔒"]), key="ei", column_config=c_act_locked, use_container_width=True, hide_index=True, num_rows="dynamic")
     
-    st.markdown("### 💵 Liquidités (Devises)")
-    st.caption("Vous pouvez forcer ou ajuster manuellement la quantité de vos liquidités ici (ex: Cash réserve).")
-    r_d = st.data_editor(df_actuel[m_dev][d_c].style.map(c_var, subset=["Var. Jour 🔒"]), key="ed", column_config=c_act_unlocked, use_container_width=True, hide_index=True, num_rows="dynamic")
+    st.markdown("### 💵 Liquidités (Devises & Réserves)")
+    st.caption("Vous pouvez forcer ou ajuster manuellement la quantité de vos liquidités ici.")
+    res_d = st.data_editor(df_actuel[m_dev][d_c].style.map(c_var, subset=["Var. Jour 🔒"]), key="ed", column_config=c_act_unlocked, use_container_width=True, hide_index=True, num_rows="dynamic")
 
-    n_df = pd.concat([r_i, r_d], ignore_index=True)
+    new_df = pd.concat([res_i, res_d], ignore_index=True)
     cols = ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)"]
-    if not n_df[cols].equals(st.session_state.donnees[cols]):
-        st.session_state.donnees = n_df[cols]
+    
+    if not new_df[cols].equals(st.session_state.donnees[cols]):
+        st.session_state.donnees = new_df[cols]
         recalculer_totaux_locaux()
         save_sheet("Donnees", st.session_state.donnees)
         st.rerun()
@@ -617,10 +631,15 @@ elif page_choisie == "⚖️ Rééquilibrage":
         with st.form("new_trans"):
             c1, c2, c3 = st.columns(3)
             t_d = c1.date_input("Date")
+            
             lt = sorted(st.session_state.donnees['Ticker'].dropna().unique().tolist())
             lt.insert(0, "➕ Nouvel actif...")
             t_sel = c2.selectbox("Actif (Ticker)", lt)
-            t_t = c2.text_input("Saisissez le Ticker du nouvel actif") if t_sel == "➕ Nouvel actif..." else t_sel
+            if t_sel == "➕ Nouvel actif...":
+                t_t = c2.text_input("Saisissez le Ticker du nouvel actif")
+            else:
+                t_t = t_sel
+                
             t_ty = c3.selectbox("Type", ["Achat", "Vente"])
             
             c4, c5, c6 = st.columns(3)
@@ -630,25 +649,36 @@ elif page_choisie == "⚖️ Rééquilibrage":
             t_dev = st.selectbox("Devise", ["USD", "EUR", "CHF", "JPY", "GBP"])
             
             if st.form_submit_button("🔨 Valider la transaction"):
-                if t_t.strip() == "": st.error("❌ Le Ticker ne peut pas être vide.")
-                elif t_q <= 0: st.error("❌ La quantité doit être strictement supérieure à 0.")
-                elif t_c <= 0: st.error("❌ Le cours doit être strictement supérieur à 0.")
+                if t_t.strip() == "":
+                    st.error("❌ Le Ticker ne peut pas être vide.")
+                elif t_q <= 0:
+                    st.error("❌ La quantité doit être strictement supérieure à 0.")
+                elif t_c <= 0:
+                    st.error("❌ Le cours doit être strictement supérieur à 0.")
                 else:
                     t_cl = t_t.upper().strip()
                     m_n = round((t_q * t_c) + t_f if t_ty == "Achat" else (t_q * t_c) - t_f, 5)
                     fx = get_historical_fx(t_dev, t_d.strftime("%Y-%m-%d"))
                     c_pru, c_qty = get_pru_and_qty(t_cl, st.session_state.transactions)
                     
-                    r_pru = round(((c_pru * c_qty) + m_n) / (c_qty + t_q), 5) if t_ty == "Achat" and (c_qty + t_q) > 0 else c_pru
-                    
+                    if t_ty == "Achat":
+                        new_cost = (c_pru * c_qty) + m_n
+                        new_qty = c_qty + t_q
+                        r_pru = round(new_cost / new_qty, 5) if new_qty > 0 else 0.0
+                    else:
+                        r_pru = c_pru
+                        
                     nr = {"Ticker": t_cl, "Type": t_ty, "Date": t_d.strftime("%d/%m/%Y"), "Quantité": t_q, "Cours": t_c, "Frais": t_f, "Montant Net": m_n, "Devise": t_dev, "PRU (Devise)": r_pru, "Taux change (EUR)": fx}
                     st.session_state.transactions = pd.concat([st.session_state.transactions, pd.DataFrame([nr])], ignore_index=True)
-                    save_sheet("Transaction", st.session_state.transactions[[c for c in st.session_state.transactions.columns if c != 'Date_DT']])
+                    cols_to_save = [c for c in st.session_state.transactions.columns if c != 'Date_DT']
+                    save_sheet("Transaction", st.session_state.transactions[cols_to_save])
                     
                     df_d = st.session_state.donnees.copy()
+                    
                     i_a = df_d.index[df_d['Ticker'] == t_cl].tolist()
                     if not i_a:
-                        df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": t_cl, "Type": "₿ Crypto" if any(c in t_cl for c in ["BTC", "ETH", "USDT"]) else "🛢️ Action", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0}])], ignore_index=True)
+                        cat_t = "Crypto" if any(c in t_cl for c in ["BTC", "ETH", "USDT"]) else "Action"
+                        df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": t_cl, "Type": cat_t, "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0}])], ignore_index=True)
                         i_a = [len(df_d) - 1]
                     
                     idx = i_a[0]
@@ -657,7 +687,7 @@ elif page_choisie == "⚖️ Rééquilibrage":
                     
                     i_c = df_d.index[df_d['Ticker'] == t_dev].tolist()
                     if not i_c:
-                        df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": t_dev, "Type": "💵 Cash", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0}])], ignore_index=True)
+                        df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": t_dev, "Type": "Cash", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0}])], ignore_index=True)
                         i_c = [len(df_d) - 1]
                     
                     df_d.at[i_c[0], "Quantité"] = max(0.0, extraire_nombre(df_d.at[i_c[0], "Quantité"]) + (-m_n if t_ty == "Achat" else m_n))
@@ -677,12 +707,11 @@ elif page_choisie == "⚖️ Rééquilibrage":
     st.subheader("⚖️ Analyse de l'allocation")
     df = st.session_state.donnees
     
-    # Prise en compte UNIQUEMENT du '💵 Cash' pur pour les fonds de roulement disponibles
-    c_usd = sum(extraire_nombre(r["Valeur totale"]) for _, r in df[df["Type"] == "💵 Cash"].iterrows())
+    c_usd = sum(extraire_nombre(r["Valeur totale"]) for _, r in df[df["Type"] == "Cash"].iterrows())
     base = sum(extraire_nombre(r["Valeur totale"]) for _, r in df.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0) + c_usd
     
     if base > 0:
-        st.info(f"💡 Liquidités d'investissement ('💵 Cash') disponibles : **{c_usd:,.2f} $**")
+        st.info(f"💡 Liquidités disponibles pour investissement (Type 'Cash' pur) : **{c_usd:,.2f} $**")
         res = []
         for _, r in df.iterrows():
             t = str(r["Ticker"]).upper()
@@ -697,18 +726,40 @@ elif page_choisie == "⚖️ Rééquilibrage":
             current_pru, _ = get_pru_and_qty(t, st.session_state.transactions)
             p_str = "N/A"
             if current_pru > 0 and p > 0: 
-                p_str = f"{(((p / current_pru) - 1) * 100):+.2f} %"
+                perf_calc = ((p / current_pru) - 1) * 100
+                p_str = f"{perf_calc:+.2f} %"
             
             s = "+ " if q > 0.000001 else "- " if q < -0.000001 else ""
             q_fmt = f"({s}{abs(round(q, 5)):.5f})" if "BTC" in t or "USDT" in t else f"({s}{abs(int(round(q)))})"
-            act_str = f"✅ ÉQUILIBRÉ ($ {abs(d):,.2f})" if abs(d) < 1000 or abs((act/base*100) - cib*100) < 2.0 else f"{'🟢 ACHETER' if d > 0 else '🔴 VENDRE'} $ {abs(d):,.2f}"
             
-            res.append({"Ticker 🔒": t, "PRU 🔒": current_pru, "Var. Jour 🔒": st.session_state.variations.get(t, "→ 0.00 %"), "Perf. Globale 🔒": p_str, "Actuel ($) 🔒": act, "Écart (%) 🔒": (act/base*100) - cib*100, "Action 🔒": act_str, "Qté (+/-) 🔒": q_fmt})
+            if abs(d) < 1000 or abs((act/base*100) - cib*100) < 2.0:
+                act_str = f"✅ ÉQUILIBRÉ ($ {abs(d):,.2f})"
+            else:
+                act_str = f"{'🟢 ACHETER' if d > 0 else '🔴 VENDRE'} $ {abs(d):,.2f}"
+            
+            res.append({
+                "Ticker 🔒": t, 
+                "PRU 🔒": current_pru, 
+                "Var. Jour 🔒": st.session_state.variations.get(t, "→ 0.00 %"), 
+                "Perf. Globale 🔒": p_str, 
+                "Actuel ($) 🔒": act, 
+                "Écart (%) 🔒": (act/base*100) - cib*100, 
+                "Action 🔒": act_str, 
+                "Qté (+/-) 🔒": q_fmt
+            })
         
-        def cr(v): return 'color:#2ecc71' if "↗" in str(v) or "ACHETER" in str(v) or "+" in str(v) else ('color:#e74c3c' if "↘" in str(v) or "VENDRE" in str(v) or "-" in str(v) else 'color:#95a5a6')
-        
+        def cr(v):
+            v_str = str(v)
+            if "↗" in v_str or "ACHETER" in v_str or "+" in v_str: return 'color:#2ecc71'
+            if "↘" in v_str or "VENDRE" in v_str or "-" in v_str: return 'color:#e74c3c'
+            return 'color:#95a5a6'
+            
         st.dataframe(
-            pd.DataFrame(res).style.format({"PRU 🔒": "{:,.5f}", "Actuel ($) 🔒": "$ {:,.2f}", "Écart (%) 🔒": "{:+.2f} %"}).map(cr, subset=["Var. Jour 🔒", "Action 🔒", "Qté (+/-) 🔒", "Perf. Globale 🔒"]), 
+            pd.DataFrame(res).style.format({
+                "PRU 🔒": "{:,.5f}", 
+                "Actuel ($) 🔒": "$ {:,.2f}", 
+                "Écart (%) 🔒": "{:+.2f} %"
+            }).map(cr, subset=["Var. Jour 🔒", "Action 🔒", "Qté (+/-) 🔒", "Perf. Globale 🔒"]), 
             use_container_width=True, 
             hide_index=True
         )
@@ -720,11 +771,15 @@ elif page_choisie == "💰 Fonds":
     
     with st.expander("➕ Nouveau mouvement"):
         with st.form("f_m"):
-            d_m, t_m = st.date_input("Date ✍️"), st.radio("Type ✍️", ["Ajout de fond propre", "Retrait"], horizontal=True)
-            m_s, d_s = st.number_input("Montant ✍️", min_value=0.00, format="%.2f"), st.selectbox("Devise ✍️", ["$", "€"])
+            d_m = st.date_input("Date ✍️")
+            t_m = st.radio("Type ✍️", ["Ajout de fond propre", "Retrait"], horizontal=True)
+            m_s = st.number_input("Montant ✍️", min_value=0.00, format="%.2f")
+            d_s = st.selectbox("Devise ✍️", ["$", "€"])
+            
             if st.form_submit_button("Valider"):
                 o_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
-                m_usd, m_eur = (m_s, m_s/TAUX_EUR_USD) if d_s == "$" else (m_s*TAUX_EUR_USD, m_s)
+                m_usd = m_s if d_s == "$" else m_s * TAUX_EUR_USD
+                m_eur = m_s if d_s == "€" else m_s / TAUX_EUR_USD
                 
                 nl = {"Date": d_m.strftime("%d/%m/%Y"), "Type": t_m, "Montant $": m_usd, "Montant €": m_eur, "Montant Or": m_usd/o_px}
                 st.session_state.historique = pd.concat([df_h, pd.DataFrame([nl])], ignore_index=True)
@@ -735,7 +790,7 @@ elif page_choisie == "💰 Fonds":
                 i_c = df_d.index[df_d['Ticker'] == dev].tolist()
                 
                 if not i_c:
-                    df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": dev, "Type": "💵 Cash", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0}])], ignore_index=True)
+                    df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": dev, "Type": "Cash", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0}])], ignore_index=True)
                     i_c = [len(df_d) - 1]
                     
                 idx_c = i_c[0]
