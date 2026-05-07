@@ -360,7 +360,6 @@ if st.sidebar.button("🔄 Recharger l'application", use_container_width=True):
     st.rerun()
 
 # --- 7. PAGES ---
-
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
     df_a, df_p = st.session_state.donnees, st.session_state.projections
@@ -529,7 +528,7 @@ if page_choisie == "📊 Tableau de bord":
 
 elif page_choisie == "📋 Liste des actifs":
     st.title("📋 Liste de mes actifs")
-    st.write("Modifiez l'allocation cible de vos actifs ici. **La colonne Quantité est verrouillée :** elle se met à jour automatiquement via l'onglet 'Rééquilibrage'.")
+    st.write("Modifiez l'allocation cible de vos actifs ici.")
     
     df_a = st.session_state.donnees.copy()
     val_inv, val_tot, somme_p, v_jour_tg_usd, p_jour_tg, v_jour_strat_usd, p_jour_strat = calculer_metriques_jour(df_a, st.session_state.variations)
@@ -552,7 +551,7 @@ elif page_choisie == "📋 Liste des actifs":
 
     df_a['Var. Jour 🔒'] = df_a['Ticker'].apply(lambda x: st.session_state.variations.get(str(x).upper(), "→ 0.00 %"))
 
-    c_act = {
+    c_act_locked = {
         "Ticker": st.column_config.TextColumn("Ticker ✍️"),
         "Type": st.column_config.SelectboxColumn("Type ✍️", options=["🛢️ Action", "📜 Obligation", "💰 Or", "₿ Crypto", "💵 Cash"]),
         "Court": st.column_config.TextColumn("Court 🔒", disabled=True),
@@ -562,12 +561,21 @@ elif page_choisie == "📋 Liste des actifs":
         "Var. Jour 🔒": st.column_config.TextColumn("Var. Jour 🔒", disabled=True)
     }
     
+    c_act_unlocked = c_act_locked.copy()
+    c_act_unlocked["Quantité"] = st.column_config.NumberColumn("Quantité ✍️", disabled=False)
+    
     def c_var(v): return 'color:#2ecc71' if "↗" in str(v) or "+" in str(v) else ('color:#e74c3c' if "↘" in str(v) or "-" in str(v) else 'color:#95a5a6')
     d_c = ["Ticker", "Type", "Court", "Quantité", "Valeur totale", "Pourcentage (%)", "Var. Jour 🔒"]
     
     m_dev = df_a.apply(lambda r: est_devise_liquide(r.get("Ticker", "")), axis=1)
-    r_i = st.data_editor(df_a[~m_dev][d_c].style.map(c_var, subset=["Var. Jour 🔒"]), key="ei", column_config=c_act, use_container_width=True, hide_index=True, num_rows="dynamic")
-    r_d = st.data_editor(df_a[m_dev][d_c].style.map(c_var, subset=["Var. Jour 🔒"]), key="ed", column_config=c_act, use_container_width=True, hide_index=True, num_rows="dynamic")
+    
+    st.markdown("### 📈 Actifs d'Investissement")
+    st.caption("La colonne Quantité est verrouillée : elle se met à jour automatiquement via vos transactions.")
+    r_i = st.data_editor(df_a[~m_dev][d_c].style.map(c_var, subset=["Var. Jour 🔒"]), key="ei", column_config=c_act_locked, use_container_width=True, hide_index=True, num_rows="dynamic")
+    
+    st.markdown("### 💵 Liquidités (Devises)")
+    st.caption("Vous pouvez forcer ou ajuster manuellement la quantité de vos liquidités ici.")
+    r_d = st.data_editor(df_a[m_dev][d_c].style.map(c_var, subset=["Var. Jour 🔒"]), key="ed", column_config=c_act_unlocked, use_container_width=True, hide_index=True, num_rows="dynamic")
 
     n_df = pd.concat([r_i, r_d], ignore_index=True)
     cols = ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)"]
@@ -578,7 +586,7 @@ elif page_choisie == "📋 Liste des actifs":
         st.rerun()
 
 elif page_choisie == "⚖️ Rééquilibrage":
-    st.title("⚖️ Stratégie de Rééquilibrage")
+    st.title("⚖️ Rééquilibrage & Transactions")
     
     with st.expander("➕ Enregistrer une transaction (Achat/Vente)"):
         with st.form("new_trans"):
@@ -596,7 +604,9 @@ elif page_choisie == "⚖️ Rééquilibrage":
             t_dev = st.selectbox("Devise", ["USD", "EUR", "CHF", "JPY", "GBP"])
             
             if st.form_submit_button("🔨 Valider la transaction"):
-                if t_t.strip() == "": st.error("Le Ticker ne peut pas être vide.")
+                if t_t.strip() == "": st.error("❌ Le Ticker ne peut pas être vide.")
+                elif t_q <= 0: st.error("❌ La quantité doit être strictement supérieure à 0.")
+                elif t_c <= 0: st.error("❌ Le cours doit être strictement supérieur à 0.")
                 else:
                     t_cl = t_t.upper().strip()
                     m_n = (t_q * t_c) + t_f if t_ty == "Achat" else (t_q * t_c) - t_f
@@ -656,17 +666,19 @@ elif page_choisie == "⚖️ Rééquilibrage":
             p = extraire_nombre(r["Court"])
             q = d / p if p > 0 else 0
             
-            p_str, pru, _ = "N/A", get_pru_and_qty(t, st.session_state.transactions)[0], 0
-            if pru > 0 and p > 0: p_str = f"{(((p / pru) - 1) * 100):+.2f} %"
+            current_pru, _ = get_pru_and_qty(t, st.session_state.transactions)
+            p_str = "N/A"
+            if current_pru > 0 and p > 0: 
+                p_str = f"{(((p / current_pru) - 1) * 100):+.2f} %"
             
             s = "+ " if q > 0.000001 else "- " if q < -0.000001 else ""
             q_fmt = f"({s}{abs(round(q, 6)):.6f})" if "BTC" in t or "USDT" in t else f"({s}{abs(int(round(q)))})"
             act_str = f"✅ ÉQUILIBRÉ ($ {abs(d):,.2f})" if abs(d) < 1000 or abs((act/base*100) - cib*100) < 2.0 else f"{'🟢 ACHETER' if d > 0 else '🔴 VENDRE'} $ {abs(d):,.2f}"
             
-            res.append({"Ticker 🔒": t, "Var. Jour 🔒": st.session_state.variations.get(t, "→ 0.00 %"), "Perf. Globale 🔒": p_str, "Actuel ($) 🔒": act, "Écart (%) 🔒": (act/base*100) - cib*100, "Action 🔒": act_str, "Qté (+/-) 🔒": q_fmt})
+            res.append({"Ticker 🔒": t, "PRU 🔒": current_pru, "Var. Jour 🔒": st.session_state.variations.get(t, "→ 0.00 %"), "Perf. Globale 🔒": p_str, "Actuel ($) 🔒": act, "Écart (%) 🔒": (act/base*100) - cib*100, "Action 🔒": act_str, "Qté (+/-) 🔒": q_fmt})
         
         def cr(v): return 'color:#2ecc71' if "↗" in str(v) or "ACHETER" in str(v) or "+" in str(v) else ('color:#e74c3c' if "↘" in str(v) or "VENDRE" in str(v) or "-" in str(v) else 'color:#95a5a6')
-        st.dataframe(pd.DataFrame(res).style.format({"Actuel ($) 🔒": "$ {:,.2f}", "Écart (%) 🔒": "{:+.2f} %"}).map(cr, subset=["Var. Jour 🔒", "Action 🔒", "Qté (+/-) 🔒", "Perf. Globale 🔒"]), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(res).style.format({"PRU 🔒": "{:,.2f}", "Actuel ($) 🔒": "$ {:,.2f}", "Écart (%) 🔒": "{:+.2f} %"}).map(cr, subset=["Var. Jour 🔒", "Action 🔒", "Qté (+/-) 🔒", "Perf. Globale 🔒"]), use_container_width=True, hide_index=True)
 
 elif page_choisie == "💰 Fonds":
     st.title("💰 Fonds")
@@ -784,7 +796,8 @@ elif page_choisie == "🌴 Retraite":
     def s_rp():
         for k in ["in_app", "in_tax"]:
             st.session_state.config[k.replace("in_","retraite_") + ("_mensuel" if "app" in k else "")] = st.session_state[k]
-        save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
+        try: save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
+        except: pass
 
     a_ret = c1.number_input("Année de départ", an+1, 2100, 2055)
     app = c1.number_input("Apport mensuel d'aujourd'hui ($)", 0.0, step=50.0, value=float(st.session_state.config.get("retraite_apport_mensuel", 250.0)), key="in_app", on_change=s_rp)
