@@ -373,7 +373,46 @@ def actualiser_cours_internet(silencieux=False):
 @st.cache_data(ttl=86400) 
 def recuperer_inflation_france():
     inflation_data = {}
-    # Retour exclusif à la Banque Mondiale
+    
+    # 1. Source Primaire : INSEE avec faux headers
+    try:
+        req = urllib.request.Request(
+            "https://www.insee.fr/fr/statistiques/serie/telecharger/001759970?ordre=chronologique&format=csv", 
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7'
+            }
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            lines = resp.read().decode('utf-8', errors='ignore').split('\n')
+            
+        yearly_indices = {}
+        for line in lines:
+            parts = line.strip().split(';')
+            if len(parts) >= 2 and '-' in parts[0]:
+                try:
+                    year = int(parts[0].split('-')[0])
+                    val = float(parts[1].replace(',', '.').replace('"', '').strip())
+                    if year not in yearly_indices:
+                        yearly_indices[year] = []
+                    yearly_indices[year].append(val)
+                except: pass
+                
+        if yearly_indices:
+            years = sorted(yearly_indices.keys())
+            for i in range(1, len(years)):
+                y = years[i]
+                prev_y = y - 1
+                if prev_y in yearly_indices:
+                    avg_y = sum(yearly_indices[y]) / len(yearly_indices[y])
+                    avg_prev_y = sum(yearly_indices[prev_y]) / len(yearly_indices[prev_y])
+                    inflation = ((avg_y / avg_prev_y) - 1) * 100
+                    if y >= 2023:
+                        inflation_data[y] = round(inflation, 2)
+    except: pass
+    
+    # 2. Source Secondaire : Banque Mondiale (Fallback)
     try:
         req = urllib.request.Request("https://api.worldbank.org/v2/country/FRA/indicator/FP.CPI.TOTL.ZG?format=json&per_page=20", headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -384,10 +423,9 @@ def recuperer_inflation_france():
                         year = int(i['date'])
                         if year not in inflation_data:
                             inflation_data[year] = round(float(i['value']), 2)
-        if inflation_data: return inflation_data
     except: pass
     
-    return None
+    return inflation_data if inflation_data else None
 
 def get_historical_fx(devise, date_val):
     d_clean = str(devise).upper().strip()
@@ -436,16 +474,132 @@ def calcul_frais_km(km, cv):
 def calcul_impot_ir(rev, parts, stat, apply_decote=True):
     qf = rev / parts
     imp = 0
-    tr = [(11294,0), (28797,0.11), (82341,0.30), (177106,0.41), (9999999,0.45)]
-    for i in range(1, len(tr)):
-        if qf > tr[i-1][0]:
-            imp += (min(qf, tr[i][0]) - tr[i-1][0]) * tr[i][1]
+    # Utilisation des barèmes configurables (Défaut 2024)
+    t1 = float(st.session_state.config.get("tax_lim_1", 11294))
+    t2 = float(st.session_state.config.get("tax_lim_2", 28797))
+    t3 = float(st.session_state.config.get("tax_lim_3", 82341))
+    t4 = float(st.session_state.config.get("tax_lim_4", 177106))
+    
+    r2 = float(st.session_state.config.get("tax_rate_2", 0.11))
+    r3 = float(st.session_state.config.get("tax_rate_3", 0.30))
+    r4 = float(st.session_state.config.get("tax_rate_4", 0.41))
+    r5 = float(st.session_state.config.get("tax_rate_5", 0.45))
+    
+    tr = [(t1, 0.0), (t2, r2), (t3, r3), (t4, r4), (999999999.0, r5)]
+    
+    prev_lim = 0.0
+    for lim, tx in tr:
+        if qf > prev_lim:
+            imp += (min(qf, lim) - prev_lim) * tx
+        prev_lim = lim
     imp *= parts
+    
     if apply_decote:
-        lim, base = (2002, 906) if "Cél" in stat else (3300, 1493)
-        if imp <= lim:
-            imp = max(0, imp - (base - (imp * 0.4525)))
+        lim_decote = float(st.session_state.config.get("decote_lim_cel", 2002)) if "Cél" in stat else float(st.session_state.config.get("decote_lim_mar", 3300))
+        base_decote = float(st.session_state.config.get("decote_base_cel", 906)) if "Cél" in stat else float(st.session_state.config.get("decote_base_mar", 1493))
+        if imp <= lim_decote:
+            imp = max(0, imp - (base_decote - (imp * 0.4525)))
+            
     return 0.0 if imp < 61 else imp
+
+# --- V2 : MECANIQUES FISCALES PRECISES ---
+
+def get_action_tax_data(df_transactions, target_year):
+    df_a = df_transactions.copy()
+    df_a['Date_DT'] = pd.to_datetime(df_a['Date'], dayfirst=True, errors='coerce')
+    df_a = df_a.dropna(subset=['Date_DT']).sort_values('Date_DT')
+    
+    results = []
+    balances = {} 
+    
+    for idx, row in df_a.iterrows():
+        t = str(row['Ticker']).upper()
+        if est_devise_liquide(t): continue
+        is_crypto = any(c in t for c in ["BTC", "ETH", "USDT", "SOL", "ADA", "XRP"])
+        if is_crypto: continue
+        
+        typ = str(row['Type']).lower()
+        qte = extraire_nombre(row['Quantité'])
+        net_local = extraire_nombre(row['Montant Net'])
+        devise = str(row.get('Devise', 'USD')).strip().upper()
+        
+        net_eur = net_local * get_historical_fx(devise, row['Date'])
+        
+        if t not in balances: balances[t] = {'qty': 0.0, 'cost_eur': 0.0}
+        
+        if "achat" in typ:
+            balances[t]['qty'] += qte
+            balances[t]['cost_eur'] += net_eur
+        elif "vente" in typ:
+            pru_eur = balances[t]['cost_eur'] / balances[t]['qty'] if balances[t]['qty'] > 0 else 0.0
+            cout_cession_eur = pru_eur * qte
+            pv_eur = net_eur - cout_cession_eur
+            
+            balances[t]['qty'] -= qte
+            balances[t]['cost_eur'] -= cout_cession_eur
+            if balances[t]['qty'] <= 0.00001: balances[t]['qty'], balances[t]['cost_eur'] = 0.0, 0.0
+            
+            if row['Date_DT'].year == target_year:
+                results.append({
+                    "Actif": t, "Date de vente": row['Date'], "Quantité vendue": format_smart(qte, is_price=True),
+                    "PRU d'Acquisition (€)": format_smart(pru_eur, "€", is_price=True), "Prix de revente net (€)": format_smart(net_eur, "€"),
+                    "Plus-value (€)": format_smart(pv_eur, "€"), "Cat": "Action/ETF", "PV Num": pv_eur
+                })
+    return results
+
+def get_crypto_tax_data(df_transactions, target_year):
+    df_c = df_transactions.copy()
+    df_c['Date_DT'] = pd.to_datetime(df_c['Date'], dayfirst=True, errors='coerce')
+    df_c = df_c.dropna(subset=['Date_DT']).sort_values('Date_DT')
+    
+    total_acq_cost = 0.0
+    crypto_balances = {}
+    results = []
+    
+    for idx, row in df_c.iterrows():
+        t = str(row['Ticker']).upper()
+        is_crypto = any(c in t for c in ["BTC", "ETH", "USDT", "SOL", "ADA", "XRP"])
+        if not is_crypto: continue
+        
+        typ = str(row['Type']).lower()
+        qte = extraire_nombre(row['Quantité'])
+        net_local = extraire_nombre(row['Montant Net'])
+        devise = str(row.get('Devise', 'USD')).strip().upper()
+        net_eur = net_local * get_historical_fx(devise, row['Date'])
+        
+        if "achat" in typ:
+            total_acq_cost += net_eur
+            crypto_balances[t] = crypto_balances.get(t, 0.0) + qte
+        elif "vente" in typ:
+            prix_cession_eur = net_eur
+            valeur_globale = 0.0
+            for c_tick, c_qty in crypto_balances.items():
+                if c_qty > 0.00001:
+                    if c_tick == t:
+                        price_per_unit = prix_cession_eur / qte if qte > 0 else 0.0
+                        valeur_globale += c_qty * price_per_unit
+                    else:
+                        try:
+                            h_px_usd = float(yf.Ticker(f"{c_tick}-USD").history(start=(row['Date_DT'] - pd.Timedelta(days=3)).strftime('%Y-%m-%d'), end=(row['Date_DT'] + pd.Timedelta(days=2)).strftime('%Y-%m-%d'))['Close'].iloc[-1])
+                            h_fx = get_historical_fx("USD", row['Date'])
+                            valeur_globale += (c_qty * h_px_usd * h_fx)
+                        except: pass
+            
+            if valeur_globale < prix_cession_eur: valeur_globale = prix_cession_eur
+            fraction_capital = total_acq_cost * (prix_cession_eur / valeur_globale) if valeur_globale > 0 else 0.0
+            pv_eur = prix_cession_eur - fraction_capital
+            
+            total_acq_cost = max(0.0, total_acq_cost - fraction_capital)
+            crypto_balances[t] = max(0.0, crypto_balances.get(t, 0.0) - qte)
+            
+            if row['Date_DT'].year == target_year:
+                results.append({
+                    "Actif": t, "Date de vente": row['Date'], "Quantité vendue": format_smart(qte, is_price=True),
+                    "Prix Cession (€)": format_smart(prix_cession_eur, "€"), "Valeur Globale Portefeuille (€)": format_smart(valeur_globale, "€"),
+                    "Fraction Capital déduite (€)": format_smart(fraction_capital, "€"), "Plus-value (€)": format_smart(pv_eur, "€"),
+                    "Cat": "Crypto", "PV Num": pv_eur
+                })
+    return results
 
 # --- 5. INITIALISATION ---
 if "variations" not in st.session_state:
@@ -458,7 +612,10 @@ if "config" not in st.session_state:
 d_conf = {
     "retraite_apport_mensuel": 250.0, "retraite_taxe": 30.0, "f_statut": "Marié(e) / Pacsé(e)", 
     "f_enf": 0.0, "f_s1": 30000.0, "f_s2": 0.0, "f_u1": 0.0, "f_k1": 0.0, "f_cv1": 5.0, 
-    "f_r1": 0.0, "f_u2": 0.0, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0
+    "f_r1": 0.0, "f_u2": 0.0, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0,
+    "tax_lim_1": 11294.0, "tax_lim_2": 28797.0, "tax_lim_3": 82341.0, "tax_lim_4": 177106.0,
+    "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45,
+    "decote_lim_cel": 2002.0, "decote_base_cel": 906.0, "decote_lim_mar": 3300.0, "decote_base_mar": 1493.0
 }
 for k, v in d_conf.items():
     if k not in st.session_state.config:
@@ -1093,7 +1250,7 @@ elif page_choisie == "📈 Performance":
         
         st.divider()
         
-        st.write("Ce tableau récapitule vos résultats par année civile. L'inflation est mise à jour automatiquement par l'API.")
+        st.write("Ce tableau récapitule vos résultats par année civile. L'inflation est mise à jour automatiquement par l'API et conservée dans l'onglet 'Inflation' de votre fichier.")
         
         df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Actifs Stratégiques', 'Valeur Bilan (Or)']].copy()
         df_display.rename(columns={'Actifs Stratégiques': 'Valeur Bilan ($)'}, inplace=True)
@@ -1287,10 +1444,15 @@ elif page_choisie == "🏛️ Fiscalité":
     st.subheader("👤 1. Ma Situation Familiale & Professionnelle")
     
     def update_fiscal_config():
-        keys_to_save = ["in_statut", "in_enf", "in_s1", "in_s2", "in_u1", "in_k1", "in_cv1", "in_r1", "in_u2", "in_k2", "in_cv2", "in_r2"]
+        keys_to_save = [
+            "in_statut", "in_enf", "in_s1", "in_s2", "in_u1", "in_k1", "in_cv1", "in_r1", "in_u2", "in_k2", "in_cv2", "in_r2",
+            "in_tax_lim_1", "in_tax_lim_2", "in_tax_lim_3", "in_tax_lim_4",
+            "in_tax_rate_2", "in_tax_rate_3", "in_tax_rate_4", "in_tax_rate_5",
+            "in_decote_lim_cel", "in_decote_base_cel", "in_decote_lim_mar", "in_decote_base_mar"
+        ]
         for key in keys_to_save:
             if key in st.session_state:
-                config_key = key.replace("in_", "f_")
+                config_key = key.replace("in_", "f_") if key.startswith("in_statut") or key.startswith("in_enf") or key.startswith("in_s") or key.startswith("in_u") or key.startswith("in_k") or key.startswith("in_cv") or key.startswith("in_r") else key.replace("in_", "")
                 st.session_state.config[config_key] = st.session_state[key]
         try: save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
         except Exception: pass
@@ -1344,93 +1506,71 @@ elif page_choisie == "🏛️ Fiscalité":
                 st.info(f"💰 Frais Réels estimés (Conjoint) : **{format_smart(frais_reels_2, '€')}**")
 
     st.divider()
+    
+    with st.expander("⚙️ Modifier les barèmes fiscaux (Mode Avancé)"):
+        st.write("L'État modifie ces tranches chaque année pour suivre l'inflation. Vous pouvez les ajuster ici pour rester à jour.")
+        col_b1, col_b2, col_b3 = st.columns(3)
+        with col_b1:
+            st.markdown("**Plafonds (Revenu 1 part)**")
+            st.number_input("Plafond Tranche 1 (€)", value=float(st.session_state.config.get("tax_lim_1", 11294.0)), key="in_tax_lim_1", on_change=update_fiscal_config)
+            st.number_input("Plafond Tranche 2 (€)", value=float(st.session_state.config.get("tax_lim_2", 28797.0)), key="in_tax_lim_2", on_change=update_fiscal_config)
+            st.number_input("Plafond Tranche 3 (€)", value=float(st.session_state.config.get("tax_lim_3", 82341.0)), key="in_tax_lim_3", on_change=update_fiscal_config)
+            st.number_input("Plafond Tranche 4 (€)", value=float(st.session_state.config.get("tax_lim_4", 177106.0)), key="in_tax_lim_4", on_change=update_fiscal_config)
+        with col_b2:
+            st.markdown("**Taux d'imposition**")
+            st.write("Tranche 1 : 0 %")
+            st.number_input("Taux Tranche 2", value=float(st.session_state.config.get("tax_rate_2", 0.11)), step=0.01, key="in_tax_rate_2", on_change=update_fiscal_config)
+            st.number_input("Taux Tranche 3", value=float(st.session_state.config.get("tax_rate_3", 0.30)), step=0.01, key="in_tax_rate_3", on_change=update_fiscal_config)
+            st.number_input("Taux Tranche 4", value=float(st.session_state.config.get("tax_rate_4", 0.41)), step=0.01, key="in_tax_rate_4", on_change=update_fiscal_config)
+            st.number_input("Taux Tranche 5", value=float(st.session_state.config.get("tax_rate_5", 0.45)), step=0.01, key="in_tax_rate_5", on_change=update_fiscal_config)
+        with col_b3:
+            st.markdown("**Mécanisme de Décote**")
+            st.number_input("Seuil d'impôt (Célibataire)", value=float(st.session_state.config.get("decote_lim_cel", 2002.0)), key="in_decote_lim_cel", on_change=update_fiscal_config)
+            st.number_input("Base de calcul (Célibataire)", value=float(st.session_state.config.get("decote_base_cel", 906.0)), key="in_decote_base_cel", on_change=update_fiscal_config)
+            st.number_input("Seuil d'impôt (Couple)", value=float(st.session_state.config.get("decote_lim_mar", 3300.0)), key="in_decote_lim_mar", on_change=update_fiscal_config)
+            st.number_input("Base de calcul (Couple)", value=float(st.session_state.config.get("decote_base_mar", 1493.0)), key="in_decote_base_mar", on_change=update_fiscal_config)
+            
+    st.divider()
 
-    df_ventes = df_t[(df_t['Type'].str.lower().str.contains('vente')) & (df_t['Date_DT'].dt.year == annee_fiscale)].copy()
-    rapport_fiscal = []
-
-    for idx, row in df_ventes.iterrows():
-        t = str(row['Ticker']).upper()
-        if est_devise_liquide(t): continue
-        
-        qte = extraire_nombre(row['Quantité'])
-        net_local = extraire_nombre(row['Montant Net'])
-        pru_usd = extraire_nombre(row.get('PRU (Devise)', 0.0))
-        devise = str(row.get('Devise', 'USD')).strip().upper()
-        
-        fx_to_usd = get_historical_usd_rate(devise, row['Date'])
-        net_usd = net_local * fx_to_usd
-        
-        cout_vente_usd = pru_usd * qte
-        pv_usd = net_usd - cout_vente_usd
-        
-        fx_usd_to_eur = get_historical_fx("USD", row['Date'])
-        pv_eur = pv_usd * fx_usd_to_eur
-        
-        is_crypto = "BTC" in t or "ETH" in t or t.endswith("USDT")
-        
-        rapport_fiscal.append({
-            "Actif": t,
-            "Date de vente": row['Date'],
-            "Quantité vendue": format_smart(qte, is_price=True),
-            "PRU Moyen ($)": format_smart(pru_usd, "$", is_price=True),
-            "Prix de revente net ($)": format_smart(net_usd, "$", is_price=True),
-            "Plus-value ($)": format_smart(pv_usd, "$"),
-            "Devise initiale": devise,
-            "Taux de change (USD vers EUR)": format_smart(fx_usd_to_eur, is_price=True),
-            "Plus-value (€)": format_smart(pv_eur, "€"),
-            "Catégorie": "Crypto" if is_crypto else "Action/ETF"
-        })
-
-    df_fiscal = pd.DataFrame(rapport_fiscal)
+    results_actions = get_action_tax_data(df_t, annee_fiscale)
+    results_cryptos = get_crypto_tax_data(df_t, annee_fiscale)
+    
+    df_actions = pd.DataFrame(results_actions)
+    df_cryptos = pd.DataFrame(results_cryptos)
 
     st.subheader(f"📝 2. Détail des Ventes Boursières (Année {annee_fiscale})")
     
-    if df_fiscal.empty:
-        st.info(f"Aucune cession d'actifs (actions ou cryptos) détectée dans la feuille 'Transaction' pour l'année {annee_fiscale}.")
-        plus_values_actions = moins_values_actions = 0.0
-        plus_values_crypto = moins_values_crypto = 0.0
+    if df_actions.empty and df_cryptos.empty:
+        st.info(f"Aucune cession d'actifs détectée dans la feuille 'Transaction' pour l'année {annee_fiscale}.")
+        plus_values_actions = moins_values_actions = plus_values_crypto = moins_values_crypto = 0.0
     else:
         st.write("Ce tableau lit les transactions déjà enregistrées et figées dans Google Sheets.")
         
-        pv_numeric = []
-        for idx, row in df_ventes.iterrows():
-            t = str(row['Ticker']).upper()
-            if est_devise_liquide(t): continue
-            qte = extraire_nombre(row['Quantité'])
-            net_local = extraire_nombre(row['Montant Net'])
-            pru_usd = extraire_nombre(row.get('PRU (Devise)', 0.0))
-            devise = str(row.get('Devise', 'USD')).strip().upper()
-            fx_to_usd = get_historical_usd_rate(devise, row['Date'])
-            net_usd = net_local * fx_to_usd
-            cout_vente_usd = pru_usd * qte
-            pv_usd = net_usd - cout_vente_usd
-            fx_usd_to_eur = get_historical_fx("USD", row['Date'])
-            pv_eur = pv_usd * fx_usd_to_eur
-            is_crypto = "BTC" in t or "ETH" in t or t.endswith("USDT")
-            pv_numeric.append({"Actif": t, "PV (€)": pv_eur, "Cat": "Crypto" if is_crypto else "Action/ETF"})
-            
-        df_pvn = pd.DataFrame(pv_numeric)
-        df_actions = df_pvn[df_pvn["Cat"] == "Action/ETF"]
-        df_cryptos = df_pvn[df_pvn["Cat"] == "Crypto"]
+        plus_values_actions = df_actions[df_actions["PV Num"] > 0]["PV Num"].sum() if not df_actions.empty else 0.0
+        moins_values_actions = abs(df_actions[df_actions["PV Num"] < 0]["PV Num"].sum()) if not df_actions.empty else 0.0
         
-        plus_values_actions = df_actions[df_actions["PV (€)"] > 0]["PV (€)"].sum()
-        moins_values_actions = abs(df_actions[df_actions["PV (€)"] < 0]["PV (€)"].sum())
-        
-        plus_values_crypto = df_cryptos[df_cryptos["PV (€)"] > 0]["PV (€)"].sum()
-        moins_values_crypto = abs(df_cryptos[df_cryptos["PV (€)"] < 0]["PV (€)"].sum())
+        plus_values_crypto = df_cryptos[df_cryptos["PV Num"] > 0]["PV Num"].sum() if not df_cryptos.empty else 0.0
+        moins_values_crypto = abs(df_cryptos[df_cryptos["PV Num"] < 0]["PV Num"].sum()) if not df_cryptos.empty else 0.0
 
-        actifs_vendus = sorted(df_fiscal["Actif"].unique().tolist())
-        tabs = st.tabs(actifs_vendus)
+        actifs_vendus = []
+        if not df_actions.empty: actifs_vendus.extend(df_actions["Actif"].unique().tolist())
+        if not df_cryptos.empty: actifs_vendus.extend(df_cryptos["Actif"].unique().tolist())
+        actifs_vendus = sorted(list(set(actifs_vendus)))
         
+        tabs = st.tabs(actifs_vendus)
         for i, actif in enumerate(actifs_vendus):
             with tabs[i]:
-                df_actif = df_fiscal[df_fiscal["Actif"] == actif].copy()
+                df_actif_a = df_actions[df_actions["Actif"] == actif] if not df_actions.empty else pd.DataFrame()
+                df_actif_c = df_cryptos[df_cryptos["Actif"] == actif] if not df_cryptos.empty else pd.DataFrame()
+                
+                df_actif = pd.concat([df_actif_a, df_actif_c])
+                
                 st.dataframe(
-                    df_actif.drop(columns=["Actif", "Catégorie"]),
-                    column_config={c: st.column_config.TextColumn(c) for c in df_actif.drop(columns=["Actif", "Catégorie"]).columns},
+                    df_actif.drop(columns=["Actif", "Cat", "PV Num"]),
+                    column_config={c: st.column_config.TextColumn(c) for c in df_actif.drop(columns=["Actif", "Cat", "PV Num"]).columns},
                     use_container_width=True, hide_index=True
                 )
-                res_actif = df_pvn[df_pvn["Actif"] == actif]["PV (€)"].sum()
+                res_actif = df_actif["PV Num"].sum()
                 color_res = "green" if res_actif >= 0 else "red"
                 st.markdown(f"*Bilan de l'année pour **{actif}** : <strong style='color:{color_res}'>{format_smart(res_actif, '€', force_sign=True)}</strong>*", unsafe_allow_html=True)
 
@@ -1455,7 +1595,7 @@ elif page_choisie == "🏛️ Fiscalité":
     
     st.subheader("💡 3. Recommandation d'imposition & Prélèvement à la Source")
     
-    if df_fiscal.empty or (plus_values_actions == 0 and moins_values_actions == 0):
+    if (df_actions.empty and df_cryptos.empty) or (plus_values_actions == 0 and moins_values_actions == 0):
         choix = "Aucun"
         cout_pfu = 0.0
         cout_bareme = 0.0
@@ -1510,7 +1650,7 @@ elif page_choisie == "🏛️ Fiscalité":
 
     st.divider()
     st.subheader("📝 4. Résumé pour votre déclaration d'impôts")
-    st.caption("⚠️ *Avertissement : Ce simulateur est une aide indicative.*")
+    st.caption("⚠️ *Avertissement : Ce simulateur est une aide indicative et utilise une approximation temporelle de la valeur globale de votre portefeuille crypto.*")
     
     c_decl1, c_decl2 = st.columns(2)
     with c_decl1:
