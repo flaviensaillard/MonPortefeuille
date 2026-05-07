@@ -96,17 +96,24 @@ def nettoyer_dataframe(df):
         df["Type"] = ""
         for idx, row in df.iterrows():
             tick = str(row.get("Ticker", "")).upper()
-            df.at[idx, "Type"] = "Cash" if est_devise_liquide(tick) else "Crypto" if any(c in tick for c in ["BTC", "ETH", "USDT"]) else "Action"
+            df.at[idx, "Type"] = "💵 Cash" if est_devise_liquide(tick) else "₿ Crypto" if any(c in tick for c in ["BTC", "ETH", "USDT"]) else "🛢️ Action"
+    else:
+        for idx, row in df.iterrows():
+            val_type = str(row.get("Type", "")).strip()
+            if val_type == "Action": df.at[idx, "Type"] = "🛢️ Action"
+            elif val_type == "Obligation": df.at[idx, "Type"] = "📜 Obligation"
+            elif val_type == "Or": df.at[idx, "Type"] = "💰 Or"
+            elif val_type == "Crypto": df.at[idx, "Type"] = "₿ Crypto"
+            elif val_type == "Cash": df.at[idx, "Type"] = "💵 Cash"
+            elif val_type == "Cash réserve": df.at[idx, "Type"] = "🏦 Cash réserve"
             
     for col in cols_finales:
         if col not in df.columns:
             df[col] = 0.0 if col in ["Quantité", "Pourcentage (%)"] else ("$ 0.00" if col in ["Court", "Valeur totale"] else "")
             
-    # FORÇAGE NUMÉRIQUE : Supprime les textes (" BTC") pour éviter le crash du NumberColumn
-    if "Quantité" in df.columns:
-        df["Quantité"] = df["Quantité"].apply(extraire_nombre)
-    if "Pourcentage (%)" in df.columns:
-        df["Pourcentage (%)"] = df["Pourcentage (%)"].apply(extraire_nombre)
+    # Forçage numérique pour éviter l'erreur NumberColumn de Streamlit
+    if "Quantité" in df.columns: df["Quantité"] = df["Quantité"].apply(extraire_nombre)
+    if "Pourcentage (%)" in df.columns: df["Pourcentage (%)"] = df["Pourcentage (%)"].apply(extraire_nombre)
         
     return df[cols_finales].reset_index(drop=True)
 
@@ -378,12 +385,9 @@ if st.sidebar.button("🔄 Recharger l'application", use_container_width=True):
     st.rerun()
 
 # --- 7. PAGES DE L'APPLICATION ---
-
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
-    
-    df_actuel = st.session_state.donnees
-    df_p = st.session_state.projections
+    df_actuel, df_p = st.session_state.donnees, st.session_state.projections
     
     val_invest, val_total, somme_p, v_jour_tg_usd, p_jour_tg, v_jour_strat_usd, p_jour_strat = calculer_metriques_jour(df_actuel, st.session_state.variations)
     cap_actuel = sum(r["Montant $"] if "ajout" in r["Type"].lower() else -r["Montant $"] for _, r in st.session_state.historique.iterrows())
@@ -467,7 +471,7 @@ if page_choisie == "📊 Tableau de bord":
             df_p_tg['Val'] = df_p_tg['Valeur totale'].apply(extraire_nombre)
             df_pie_tg = df_p_tg[df_p_tg['Val']>0].groupby('Type')['Val'].sum().reset_index()
             if not df_pie_tg.empty:
-                fig_tg = px.pie(df_pie_tg, values='Val', names='Type', color='Type', color_discrete_map={"Action": "#e74c3c", "Obligation": "#3498db", "Or": "#f1c40f", "Crypto": "#9b59b6", "Cash": "#2ecc71"}, hole=0.4)
+                fig_tg = px.pie(df_pie_tg, values='Val', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or": "#f1c40f", "₿ Crypto": "#9b59b6", "💵 Cash": "#2ecc71", "🏦 Cash réserve": "#f39c12"}, hole=0.4)
                 fig_tg.update_traces(textposition='inside', textinfo='percent+label')
                 fig_tg.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
                 st.plotly_chart(fig_tg, use_container_width=True)
@@ -525,7 +529,7 @@ if page_choisie == "📊 Tableau de bord":
         st.markdown("*Classes d'actifs ciblées*")
         d_p1 = df_st[df_st['Val']>0].groupby('Type')['Val'].sum().reset_index()
         if not d_p1.empty:
-            f1 = px.pie(d_p1, values='Val', names='Type', color='Type', color_discrete_map={"Action": "#e74c3c", "Obligation": "#3498db", "Or": "#f1c40f", "Crypto": "#9b59b6", "Cash": "#2ecc71"}, hole=0.4)
+            f1 = px.pie(d_p1, values='Val', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or": "#f1c40f", "₿ Crypto": "#9b59b6", "💵 Cash": "#2ecc71", "🏦 Cash réserve": "#f39c12"}, hole=0.4)
             f1.update_traces(textposition='inside', textinfo='percent+label')
             f1.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
             st.plotly_chart(f1, use_container_width=True)
@@ -542,7 +546,7 @@ if page_choisie == "📊 Tableau de bord":
     cr1, cr2 = st.columns(2)
     with cr1:
         st.write("") 
-        inf = st.slider("Inflation cible à déduire (%)", 0.0, 15.0, 2.0, 0.1, key="dash_infl")
+        inf = st.slider("Inflation cible à déduire (%) ✍️", 0.0, 15.0, 2.0, 0.1, key="dash_infl")
     with cr2:
         tx_r = ((1 + 0.08) / (1 + (inf / 100.0))) - 1
         afficher_montant_double("Rente Mensuelle Nette (Base 8% par an)", (val_invest * max(0.0, tx_r)) / 12.0, couleur_valeur="#3498db")
@@ -570,31 +574,33 @@ elif page_choisie == "📋 Liste des actifs":
         actualiser_cours_internet(False)
         st.rerun()
 
-    df_actuel['Var. Jour'] = df_actuel['Ticker'].apply(lambda x: st.session_state.variations.get(str(x).upper(), "→ 0.00 %"))
+    df_actuel['Var. Jour 🔒'] = df_actuel['Ticker'].apply(lambda x: st.session_state.variations.get(str(x).upper(), "→ 0.00 %"))
 
     c_act_locked = {
-        "Ticker": st.column_config.TextColumn("Ticker"),
-        "Type": st.column_config.SelectboxColumn("Type", options=["Action", "Obligation", "Or", "Crypto", "Cash"]),
-        "Court": st.column_config.TextColumn("Court", disabled=True),
-        "Quantité": st.column_config.NumberColumn("Quantité", disabled=True, format="%.5f"),
-        "Valeur totale": st.column_config.TextColumn("Valeur totale", disabled=True),
-        "Pourcentage (%)": st.column_config.NumberColumn("Pourcentage (%)", format="%.2f%%"),
-        "Var. Jour": st.column_config.TextColumn("Var. Jour", disabled=True)
+        "Ticker": st.column_config.TextColumn("Ticker ✍️"),
+        "Type": st.column_config.SelectboxColumn("Type ✍️", options=["🛢️ Action", "📜 Obligation", "💰 Or", "₿ Crypto", "💵 Cash", "🏦 Cash réserve"]),
+        "Court": st.column_config.TextColumn("Court 🔒", disabled=True),
+        "Quantité": st.column_config.NumberColumn("Quantité 🔒", disabled=True, format="%.5f"),
+        "Valeur totale": st.column_config.TextColumn("Valeur totale 🔒", disabled=True),
+        "Pourcentage (%)": st.column_config.NumberColumn("Pourcentage (%) ✍️", format="%.2f%%"),
+        "Var. Jour 🔒": st.column_config.TextColumn("Var. Jour 🔒", disabled=True)
     }
     
     c_act_unlocked = c_act_locked.copy()
-    c_act_unlocked["Quantité"] = st.column_config.NumberColumn("Quantité", disabled=False, format="%.5f")
+    c_act_unlocked["Quantité"] = st.column_config.NumberColumn("Quantité ✍️", disabled=False, format="%.5f")
     
     def c_var(v): return 'color:#2ecc71' if "↗" in str(v) or "+" in str(v) else ('color:#e74c3c' if "↘" in str(v) or "-" in str(v) else 'color:#95a5a6')
-    d_c = ["Ticker", "Type", "Court", "Quantité", "Valeur totale", "Pourcentage (%)", "Var. Jour"]
+    d_c = ["Ticker", "Type", "Court", "Quantité", "Valeur totale", "Pourcentage (%)", "Var. Jour 🔒"]
     
     m_dev = df_actuel.apply(lambda r: est_devise_liquide(r.get("Ticker", "")), axis=1)
     
     st.markdown("### 📈 Actifs d'Investissement")
-    r_i = st.data_editor(df_actuel[~m_dev][d_c].style.map(c_var, subset=["Var. Jour"]), key="ei", column_config=c_act_locked, use_container_width=True, hide_index=True, num_rows="dynamic")
+    st.caption("La colonne Quantité est verrouillée : elle se met à jour automatiquement via vos transactions.")
+    r_i = st.data_editor(df_actuel[~m_dev][d_c].style.map(c_var, subset=["Var. Jour 🔒"]), key="ei", column_config=c_act_locked, use_container_width=True, hide_index=True, num_rows="dynamic")
     
     st.markdown("### 💵 Liquidités (Devises)")
-    r_d = st.data_editor(df_actuel[m_dev][d_c].style.map(c_var, subset=["Var. Jour"]), key="ed", column_config=c_act_unlocked, use_container_width=True, hide_index=True, num_rows="dynamic")
+    st.caption("Vous pouvez forcer ou ajuster manuellement la quantité de vos liquidités ici (ex: Cash réserve).")
+    r_d = st.data_editor(df_actuel[m_dev][d_c].style.map(c_var, subset=["Var. Jour 🔒"]), key="ed", column_config=c_act_unlocked, use_container_width=True, hide_index=True, num_rows="dynamic")
 
     n_df = pd.concat([r_i, r_d], ignore_index=True)
     cols = ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)"]
@@ -642,7 +648,7 @@ elif page_choisie == "⚖️ Rééquilibrage":
                     df_d = st.session_state.donnees.copy()
                     i_a = df_d.index[df_d['Ticker'] == t_cl].tolist()
                     if not i_a:
-                        df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": t_cl, "Type": "Crypto" if any(c in t_cl for c in ["BTC", "ETH", "USDT"]) else "Action", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0}])], ignore_index=True)
+                        df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": t_cl, "Type": "₿ Crypto" if any(c in t_cl for c in ["BTC", "ETH", "USDT"]) else "🛢️ Action", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0}])], ignore_index=True)
                         i_a = [len(df_d) - 1]
                     
                     idx = i_a[0]
@@ -651,7 +657,7 @@ elif page_choisie == "⚖️ Rééquilibrage":
                     
                     i_c = df_d.index[df_d['Ticker'] == t_dev].tolist()
                     if not i_c:
-                        df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": t_dev, "Type": "Cash", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0}])], ignore_index=True)
+                        df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": t_dev, "Type": "💵 Cash", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0}])], ignore_index=True)
                         i_c = [len(df_d) - 1]
                     
                     df_d.at[i_c[0], "Quantité"] = max(0.0, extraire_nombre(df_d.at[i_c[0], "Quantité"]) + (-m_n if t_ty == "Achat" else m_n))
@@ -670,11 +676,13 @@ elif page_choisie == "⚖️ Rééquilibrage":
         
     st.subheader("⚖️ Analyse de l'allocation")
     df = st.session_state.donnees
-    c_usd = sum(extraire_nombre(r["Valeur totale"]) for _, r in df[df.apply(lambda row: est_devise_liquide(row.get("Ticker", "")), axis=1)].iterrows())
+    
+    # Prise en compte UNIQUEMENT du '💵 Cash' pur pour les fonds de roulement disponibles
+    c_usd = sum(extraire_nombre(r["Valeur totale"]) for _, r in df[df["Type"] == "💵 Cash"].iterrows())
     base = sum(extraire_nombre(r["Valeur totale"]) for _, r in df.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0) + c_usd
     
     if base > 0:
-        st.info(f"💡 Liquidités disponibles (Toutes devises confondues) : **{c_usd:,.2f} $**")
+        st.info(f"💡 Liquidités d'investissement ('💵 Cash') disponibles : **{c_usd:,.2f} $**")
         res = []
         for _, r in df.iterrows():
             t = str(r["Ticker"]).upper()
@@ -695,10 +703,15 @@ elif page_choisie == "⚖️ Rééquilibrage":
             q_fmt = f"({s}{abs(round(q, 5)):.5f})" if "BTC" in t or "USDT" in t else f"({s}{abs(int(round(q)))})"
             act_str = f"✅ ÉQUILIBRÉ ($ {abs(d):,.2f})" if abs(d) < 1000 or abs((act/base*100) - cib*100) < 2.0 else f"{'🟢 ACHETER' if d > 0 else '🔴 VENDRE'} $ {abs(d):,.2f}"
             
-            res.append({"Ticker": t, "PRU": current_pru, "Var. Jour": st.session_state.variations.get(t, "→ 0.00 %"), "Perf. Globale": p_str, "Actuel ($)": act, "Écart (%)": (act/base*100) - cib*100, "Action": act_str, "Qté (+/-)": q_fmt})
+            res.append({"Ticker 🔒": t, "PRU 🔒": current_pru, "Var. Jour 🔒": st.session_state.variations.get(t, "→ 0.00 %"), "Perf. Globale 🔒": p_str, "Actuel ($) 🔒": act, "Écart (%) 🔒": (act/base*100) - cib*100, "Action 🔒": act_str, "Qté (+/-) 🔒": q_fmt})
         
         def cr(v): return 'color:#2ecc71' if "↗" in str(v) or "ACHETER" in str(v) or "+" in str(v) else ('color:#e74c3c' if "↘" in str(v) or "VENDRE" in str(v) or "-" in str(v) else 'color:#95a5a6')
-        st.dataframe(pd.DataFrame(res).style.format({"PRU": "{:,.5f}", "Actuel ($)": "$ {:,.2f}", "Écart (%)": "{:+.2f} %"}).map(cr, subset=["Var. Jour", "Action", "Qté (+/-)", "Perf. Globale"]), use_container_width=True, hide_index=True)
+        
+        st.dataframe(
+            pd.DataFrame(res).style.format({"PRU 🔒": "{:,.5f}", "Actuel ($) 🔒": "$ {:,.2f}", "Écart (%) 🔒": "{:+.2f} %"}).map(cr, subset=["Var. Jour 🔒", "Action 🔒", "Qté (+/-) 🔒", "Perf. Globale 🔒"]), 
+            use_container_width=True, 
+            hide_index=True
+        )
 
 elif page_choisie == "💰 Fonds":
     st.title("💰 Fonds")
@@ -707,8 +720,8 @@ elif page_choisie == "💰 Fonds":
     
     with st.expander("➕ Nouveau mouvement"):
         with st.form("f_m"):
-            d_m, t_m = st.date_input("Date"), st.radio("Type", ["Ajout de fond propre", "Retrait"], horizontal=True)
-            m_s, d_s = st.number_input("Montant", min_value=0.00, format="%.2f"), st.selectbox("Devise", ["$", "€"])
+            d_m, t_m = st.date_input("Date ✍️"), st.radio("Type ✍️", ["Ajout de fond propre", "Retrait"], horizontal=True)
+            m_s, d_s = st.number_input("Montant ✍️", min_value=0.00, format="%.2f"), st.selectbox("Devise ✍️", ["$", "€"])
             if st.form_submit_button("Valider"):
                 o_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
                 m_usd, m_eur = (m_s, m_s/TAUX_EUR_USD) if d_s == "$" else (m_s*TAUX_EUR_USD, m_s)
@@ -722,7 +735,7 @@ elif page_choisie == "💰 Fonds":
                 i_c = df_d.index[df_d['Ticker'] == dev].tolist()
                 
                 if not i_c:
-                    df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": dev, "Type": "Cash", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0}])], ignore_index=True)
+                    df_d = pd.concat([df_d, pd.DataFrame([{"Ticker": dev, "Type": "💵 Cash", "Quantité": 0.0, "Court": "$ 0.00", "Valeur totale": "$ 0.00", "Pourcentage (%)": 0.0}])], ignore_index=True)
                     i_c = [len(df_d) - 1]
                     
                 idx_c = i_c[0]
@@ -748,31 +761,31 @@ elif page_choisie == "💰 Fonds":
     
     if not df_h.empty:
         d_v = df_h.copy()
-        d_v.columns = [f"{c}" for c in d_v.columns]
-        d_v['DT'] = pd.to_datetime(d_v['Date'], dayfirst=True, errors='coerce')
-        st.dataframe(d_v.sort_values('DT', ascending=False).drop(columns=['DT']).style.format({"Montant $": "$ {:,.2f}", "Montant €": "{:,.2f} €", "Montant Or": "{:,.4f} oz"}), use_container_width=True, hide_index=True)
+        d_v.columns = [f"{c} 🔒" for c in d_v.columns]
+        d_v['DT'] = pd.to_datetime(d_v['Date 🔒'], dayfirst=True, errors='coerce')
+        st.dataframe(d_v.sort_values('DT', ascending=False).drop(columns=['DT']).style.format({"Montant $ 🔒": "$ {:,.2f}", "Montant € 🔒": "{:,.2f} €", "Montant Or 🔒": "{:,.4f} oz"}), use_container_width=True, hide_index=True)
 
 elif page_choisie == "🏖️ Suivi":
     st.title("🏖️ Suivi & Évolution")
-    st.write("Ce tableau enregistre vos points de passage. **Votre robot automatique enregistre une nouvelle ligne chaque nuit.** Ce tableau est en lecture seule.")
+    st.write("Ce tableau enregistre vos points de passage. **Votre robot automatique enregistre une nouvelle ligne chaque nuit.** Ce tableau est en lecture seule (🔒).")
     
     if not st.session_state.projections.empty:
         df_v = st.session_state.projections.copy()
         df_v['DT'] = pd.to_datetime(df_v['Date'], dayfirst=True, errors='coerce')
         
         config_suivi = {
-            "Date": st.column_config.TextColumn("Date"),
-            "Capital investi": st.column_config.NumberColumn("Cap. inv.", format="$ %.2f"),
-            "Actifs Stratégiques": st.column_config.NumberColumn("Actifs", format="$ %.2f"),
-            "Total Global": st.column_config.NumberColumn("Total", format="$ %.2f"),
-            "Evolution actifs $": st.column_config.NumberColumn("Evol. Actifs ($)", format="$ %+.2f"),
-            "Evolution actifs %": st.column_config.NumberColumn("Evol. Actifs (%)", format="%+.2f %%"),
-            "Evolution cumulée $": st.column_config.NumberColumn("Evol. Cumulée ($)", format="$ %+.2f"),
-            "Evolution cumulée %": st.column_config.NumberColumn("Evol. Cumulée (%)", format="%+.2f %%"),
-            "Score TWR %": st.column_config.NumberColumn("Score TWR (%)", format="%+.2f %%"),
-            "TG_Evolution cumulée $": st.column_config.NumberColumn("TG Evol. Cumulée ($)", format="$ %+.2f"),
-            "TG_Evolution cumulée %": st.column_config.NumberColumn("TG Evol. Cumulée (%)", format="%+.2f %%"),
-            "TG_Score TWR %": st.column_config.NumberColumn("TG Score TWR (%)", format="%+.2f %%")
+            "Date": st.column_config.TextColumn("Date 🔒"),
+            "Capital investi": st.column_config.NumberColumn("Cap. inv. 🔒", format="$ %.2f"),
+            "Actifs Stratégiques": st.column_config.NumberColumn("Actifs 🔒", format="$ %.2f"),
+            "Total Global": st.column_config.NumberColumn("Total 🔒", format="$ %.2f"),
+            "Evolution actifs $": st.column_config.NumberColumn("Evol. Actifs ($) 🔒", format="$ %+.2f"),
+            "Evolution actifs %": st.column_config.NumberColumn("Evol. Actifs (%) 🔒", format="%+.2f %%"),
+            "Evolution cumulée $": st.column_config.NumberColumn("Evol. Cumulée ($) 🔒", format="$ %+.2f"),
+            "Evolution cumulée %": st.column_config.NumberColumn("Evol. Cumulée (%) 🔒", format="%+.2f %%"),
+            "Score TWR %": st.column_config.NumberColumn("Score TWR (%) 🔒", format="%+.2f %%"),
+            "TG_Evolution cumulée $": st.column_config.NumberColumn("TG Evol. Cumulée ($) 🔒", format="$ %+.2f"),
+            "TG_Evolution cumulée %": st.column_config.NumberColumn("TG Evol. Cumulée (%) 🔒", format="%+.2f %%"),
+            "TG_Score TWR %": st.column_config.NumberColumn("TG Score TWR (%) 🔒", format="%+.2f %%")
         }
         
         st.dataframe(df_v.sort_values('DT', ascending=False).drop(columns=['DT']), column_config=config_suivi, use_container_width=True, hide_index=True)
@@ -846,13 +859,13 @@ elif page_choisie == "📈 Performance":
         st.dataframe(
             df_sorted,
             column_config={
-                "Année": st.column_config.TextColumn("Année"),
-                "Performance brute (%)": st.column_config.NumberColumn("Perf. Brute (%)", format="%.2f %%"),
-                "Inflation (%)": st.column_config.NumberColumn("Inflation (%)", format="%.2f %%"),
-                "Performance nette (%)": st.column_config.NumberColumn("Perf. Nette (%)", format="%.2f %%"),
-                "Gains Nets ($)": st.column_config.NumberColumn("Gains Nets ($)", format="$ %.2f"),
-                "Valeur Bilan ($)": st.column_config.NumberColumn("Valeur Bilan ($)", format="$ %.2f"),
-                "Valeur Bilan (Or)": st.column_config.NumberColumn("Valeur Bilan (Or)", format="%.2f oz")
+                "Année": st.column_config.TextColumn("Année 🔒"),
+                "Performance brute (%)": st.column_config.NumberColumn("Perf. Brute (%) 🔒", format="%.2f %%"),
+                "Inflation (%)": st.column_config.NumberColumn("Inflation (%) 🔒", format="%.2f %%"),
+                "Performance nette (%)": st.column_config.NumberColumn("Perf. Nette (%) 🔒", format="%.2f %%"),
+                "Gains Nets ($)": st.column_config.NumberColumn("Gains Nets ($) 🔒", format="$ %.2f"),
+                "Valeur Bilan ($)": st.column_config.NumberColumn("Valeur Bilan ($) 🔒", format="$ %.2f"),
+                "Valeur Bilan (Or)": st.column_config.NumberColumn("Valeur Bilan (Or) 🔒", format="%.2f oz")
             },
             hide_index=True, use_container_width=True
         )
@@ -915,9 +928,9 @@ elif page_choisie == "🌴 Retraite":
         except: pass
 
     with c_p1:
-        annee_retraite = st.number_input("Année de départ (1er Janvier)", min_value=annee_en_cours+1, max_value=2100, value=2055, step=1)
+        annee_retraite = st.number_input("Année de départ (1er Janvier) ✍️", min_value=annee_en_cours+1, max_value=2100, value=2055, step=1)
         apport_mensuel = st.number_input(
-            "Apport mensuel d'aujourd'hui ($)", 
+            "Apport mensuel d'aujourd'hui ($) ✍️", 
             min_value=0.00, 
             step=50.00, 
             value=float(st.session_state.config.get("retraite_apport_mensuel", 250.0)),
@@ -925,12 +938,12 @@ elif page_choisie == "🌴 Retraite":
             on_change=on_retraite_params_change
         )
     with c_p2:
-        rendement_a = st.number_input("Performance Scénario A (%)", min_value=0.00, max_value=30.00, value=round(max(0.00, float(moy_brute_hist)), 2), step=0.01, help="Par défaut : moyenne de vos performances passées.")
-        rendement_b = st.number_input("Performance Scénario B (%)", min_value=0.00, value=8.00, step=0.01)
+        rendement_a = st.number_input("Performance Scénario A (%) ✍️", min_value=0.00, max_value=30.00, value=round(max(0.00, float(moy_brute_hist)), 2), step=0.01, help="Par défaut : moyenne de vos performances passées.")
+        rendement_b = st.number_input("Performance Scénario B (%) ✍️", min_value=0.00, value=8.00, step=0.01)
     with c_p3:
-        inflation_estimee = st.number_input("Inflation annuelle estimée (%)", min_value=0.00, value=2.00, step=0.01)
+        inflation_estimee = st.number_input("Inflation annuelle estimée (%) ✍️", min_value=0.00, value=2.00, step=0.01)
         taxe_plus_value = st.number_input(
-            "Fiscalité sur les retraits (Flat Tax) (%)", 
+            "Fiscalité sur les retraits (Flat Tax) (%) ✍️", 
             min_value=0.00, 
             max_value=60.00, 
             step=0.10, 
@@ -965,16 +978,16 @@ elif page_choisie == "🌴 Retraite":
     
     with colA:
         st.markdown(f"### Scénario A (Moyenne : {rendement_a:.2f} % / an)")
-        afficher_montant_double("💰 Valeur Brute du Magot", cap_a_nom)
-        afficher_montant_double("🛒 Valeur Nette (Pouvoir d'achat)", cap_a_real)
+        afficher_montant_double("💰 Valeur Brute du Magot 🔒", cap_a_nom)
+        afficher_montant_double("🛒 Valeur Nette (Pouvoir d'achat) 🔒", cap_a_real)
         st.write("")
         afficher_montant_double("Rente Mensuelle Nette (Avant impôts)", cap_a_real*tx_r/12, couleur_valeur="#2ecc71")
         afficher_montant_double(f"Après Impôts ({taxe_plus_value:.1f}%)", (cap_a_real*tx_r/12)*(1-taxe_plus_value/100.0), couleur_valeur="#e67e22", taille="medium")
 
     with colB:
         st.markdown(f"### Scénario B (Fixe : {rendement_b:.2f} % / an)")
-        afficher_montant_double("💰 Valeur Brute du Magot", cap_b_nom)
-        afficher_montant_double("🛒 Valeur Nette (Pouvoir d'achat)", cap_b_real)
+        afficher_montant_double("💰 Valeur Brute du Magot 🔒", cap_b_nom)
+        afficher_montant_double("🛒 Valeur Nette (Pouvoir d'achat) 🔒", cap_b_real)
         st.write("")
         afficher_montant_double("Rente Mensuelle Nette (Avant impôts)", cap_b_real*tx_r/12, couleur_valeur="#3498db")
         afficher_montant_double(f"Après Impôts ({taxe_plus_value:.1f}%)", (cap_b_real*tx_r/12)*(1-taxe_plus_value/100.0), couleur_valeur="#e67e22", taille="medium")
@@ -1016,18 +1029,18 @@ elif page_choisie == "🏛️ Fiscalité":
     c_sit1, c_sit2 = st.columns(2)
     with c_sit1:
         idx_statut = 0 if st.session_state.config.get("f_statut", "Célibataire / Divorcé(e) / Veuf(ve)") == "Célibataire / Divorcé(e) / Veuf(ve)" else 1
-        statut = st.radio("Situation matrimoniale", ["Célibataire / Divorcé(e) / Veuf(ve)", "Marié(e) / Pacsé(e)"], index=idx_statut, key="in_statut", on_change=update_fiscal_config)
-        enfants = st.number_input("Nombre d'enfants à charge", min_value=0, max_value=10, value=int(st.session_state.config.get("f_enf", 0)), step=1, key="in_enf", on_change=update_fiscal_config)
+        statut = st.radio("Situation matrimoniale ✍️", ["Célibataire / Divorcé(e) / Veuf(ve)", "Marié(e) / Pacsé(e)"], index=idx_statut, key="in_statut", on_change=update_fiscal_config)
+        enfants = st.number_input("Nombre d'enfants à charge ✍️", min_value=0, max_value=10, value=int(st.session_state.config.get("f_enf", 0)), step=1, key="in_enf", on_change=update_fiscal_config)
     
     mariage_actif = "Marié" in statut
 
     with c_sit2:
         st.markdown("**Vos revenus nets imposables (Vous)**")
-        salaire_1 = st.number_input("Salaires, etc. en € (Déclarant 1)", min_value=0.0, value=float(st.session_state.config.get("f_s1", 30000.0)), step=1000.0, key="in_s1", on_change=update_fiscal_config)
+        salaire_1 = st.number_input("Salaires, etc. en € (Déclarant 1) ✍️", min_value=0.0, value=float(st.session_state.config.get("f_s1", 30000.0)), step=1000.0, key="in_s1", on_change=update_fiscal_config)
         salaire_2 = 0.0
         if mariage_actif:
             st.markdown("**Vos revenus nets imposables (Conjoint)**")
-            salaire_2 = st.number_input("Salaires, etc. en € (Déclarant 2)", min_value=0.0, value=float(st.session_state.config.get("f_s2", 0.0)), step=1000.0, key="in_s2", on_change=update_fiscal_config)
+            salaire_2 = st.number_input("Salaires, etc. en € (Déclarant 2) ✍️", min_value=0.0, value=float(st.session_state.config.get("f_s2", 0.0)), step=1000.0, key="in_s2", on_change=update_fiscal_config)
         salaire_total = salaire_1 + salaire_2
 
     st.markdown("---")
@@ -1040,9 +1053,9 @@ elif page_choisie == "🏛️ Fiscalité":
         use_frais_1 = st.checkbox("Déclarer aux frais réels (Vous)", value=bool(int(st.session_state.config.get("f_u1", 0))), key="in_u1", on_change=update_fiscal_config)
         frais_reels_1 = 0.0
         if use_frais_1:
-            km_1 = st.number_input("Kilomètres annuels (Trajet pro) - Vous", min_value=0, max_value=100000, value=int(st.session_state.config.get("f_k1", 0)), step=1000, key="in_k1", on_change=update_fiscal_config)
-            cv_1 = st.selectbox("Puissance du véhicule (CV) - Vous", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv1", 5))), key="in_cv1", on_change=update_fiscal_config)
-            repas_1 = st.number_input("Jours de repas au travail - Vous", min_value=0, max_value=300, value=int(st.session_state.config.get("f_r1", 0)), step=10, key="in_r1", on_change=update_fiscal_config)
+            km_1 = st.number_input("Kilomètres annuels (Trajet pro) - Vous ✍️", min_value=0, max_value=100000, value=int(st.session_state.config.get("f_k1", 0)), step=1000, key="in_k1", on_change=update_fiscal_config)
+            cv_1 = st.selectbox("Puissance du véhicule (CV) - Vous ✍️", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv1", 5))), key="in_cv1", on_change=update_fiscal_config)
+            repas_1 = st.number_input("Jours de repas au travail - Vous ✍️", min_value=0, max_value=300, value=int(st.session_state.config.get("f_r1", 0)), step=10, key="in_r1", on_change=update_fiscal_config)
             frais_km_1 = calcul_frais_km(km_1, cv_1)
             frais_repas_1 = repas_1 * 5.35
             frais_reels_1 = frais_km_1 + frais_repas_1
@@ -1053,9 +1066,9 @@ elif page_choisie == "🏛️ Fiscalité":
         with col_f2:
             use_frais_2 = st.checkbox("Déclarer aux frais réels (Conjoint)", value=bool(int(st.session_state.config.get("f_u2", 0))), key="in_u2", on_change=update_fiscal_config)
             if use_frais_2:
-                km_2 = st.number_input("Kilomètres annuels (Trajet pro) - Conjoint", min_value=0, max_value=100000, value=int(st.session_state.config.get("f_k2", 0)), step=1000, key="in_k2", on_change=update_fiscal_config)
-                cv_2 = st.selectbox("Puissance du véhicule (CV) - Conjoint", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv2", 5))), key="in_cv2", on_change=update_fiscal_config)
-                repas_2 = st.number_input("Jours de repas au travail - Conjoint", min_value=0, max_value=300, value=int(st.session_state.config.get("f_r2", 0)), step=10, key="in_r2", on_change=update_fiscal_config)
+                km_2 = st.number_input("Kilomètres annuels (Trajet pro) - Conjoint ✍️", min_value=0, max_value=100000, value=int(st.session_state.config.get("f_k2", 0)), step=1000, key="in_k2", on_change=update_fiscal_config)
+                cv_2 = st.selectbox("Puissance du véhicule (CV) - Conjoint ✍️", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv2", 5))), key="in_cv2", on_change=update_fiscal_config)
+                repas_2 = st.number_input("Jours de repas au travail - Conjoint ✍️", min_value=0, max_value=300, value=int(st.session_state.config.get("f_r2", 0)), step=10, key="in_r2", on_change=update_fiscal_config)
                 frais_km_2 = calcul_frais_km(km_2, cv_2)
                 frais_repas_2 = repas_2 * 5.35
                 frais_reels_2 = frais_km_2 + frais_repas_2
