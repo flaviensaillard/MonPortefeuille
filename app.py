@@ -238,7 +238,6 @@ def calculer_metriques_jour(df_actuel, variations):
     val_invest = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
     val_total = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows())
     somme_p = sum(extraire_nombre(r["Pourcentage (%)"]) for _, r in df_actuel.iterrows())
-    
     v_jour_tg_usd = val_tot_veille = v_jour_strat_usd = val_inv_veille = 0.0
     for _, r in df_actuel.iterrows():
         tick = str(r.get("Ticker", "")).strip().upper()
@@ -247,19 +246,14 @@ def calculer_metriques_jour(df_actuel, variations):
         v_pct = float(match.group(1)) if match else 0.0
         v_veil = v_act / (1 + v_pct / 100) if (1 + v_pct / 100) != 0 else v_act
         
-        v_jour_tg_usd += (v_act - v_veil)
-        val_tot_veille += v_veil
+        v_jour_tg_usd += (v_act - v_veil); val_tot_veille += v_veil
         if extraire_nombre(r["Pourcentage (%)"]) > 0:
-            v_jour_strat_usd += (v_act - v_veil)
-            val_inv_veille += v_veil
-            
-    pct_jour_tg = (v_jour_tg_usd / val_tot_veille * 100) if val_tot_veille > 0 else 0.0
-    pct_jour_strat = (v_jour_strat_usd / val_inv_veille * 100) if val_inv_veille > 0 else 0.0
-    return val_invest, val_total, somme_p, v_jour_tg_usd, pct_jour_tg, v_jour_strat_usd, pct_jour_strat
+            v_jour_strat_usd += (v_act - v_veil); val_inv_veille += v_veil
+    return val_invest, val_total, somme_p, v_jour_tg_usd, (v_jour_tg_usd / val_tot_veille * 100) if val_tot_veille > 0 else 0.0, v_jour_strat_usd, (v_jour_strat_usd / val_inv_veille * 100) if val_inv_veille > 0 else 0.0
 
 def actualiser_cours_internet(silencieux=False):
     if "donnees" in st.session_state:
-        if not silencieux: st.toast("🔄 Actualisation massive des cours en cours...")
+        if not silencieux: st.toast("🔄 Actualisation massive des cours (Vectorisation API)...")
         df_tmp = st.session_state.donnees.copy()
         changement = False
         
@@ -282,8 +276,6 @@ def actualiser_cours_internet(silencieux=False):
         hist_data = {}
         if yf_tickers_to_fetch:
             tickers_list = list(yf_tickers_to_fetch)
-            
-            # 1. Mise en cache des devises réelles des actifs Yahoo Finance (ex: XJSE.SW est en CHF)
             for yf_t in tickers_list:
                 if yf_t not in st.session_state.yf_currencies:
                     try:
@@ -292,8 +284,6 @@ def actualiser_cours_internet(silencieux=False):
                         st.session_state.yf_currencies[yf_t] = c
                     except:
                         st.session_state.yf_currencies[yf_t] = "USD"
-                        
-            # 2. Requête vectorisée pour aller 10x plus vite
             try:
                 data = yf.download(tickers_list, period="5d", progress=False)['Close']
                 for yf_t in tickers_list:
@@ -307,17 +297,24 @@ def actualiser_cours_internet(silencieux=False):
             except Exception as e:
                 st.error("⚠️ Erreur de connexion massive à Yahoo Finance.")
 
+        # Construction de la map des devises à partir des transactions de l'utilisateur (Priorité Absolue)
+        dev_map = {}
+        if "transactions" in st.session_state and not st.session_state.transactions.empty:
+            df_t_map = st.session_state.transactions.copy()
+            if 'Date_DT' not in df_t_map.columns: df_t_map['Date_DT'] = pd.to_datetime(df_t_map['Date'], dayfirst=True, errors='coerce')
+            df_t_map = df_t_map.dropna(subset=['Date_DT']).sort_values('Date_DT')
+            for _, rt in df_t_map.iterrows():
+                dev_map[str(rt['Ticker']).strip().upper()] = str(rt.get('Devise', 'USD')).strip().upper()
+
         taux_cache = {}
         for idx, row in df_tmp.iterrows():
             tick = str(row.get("Ticker", "")).strip().upper()
             if not tick or tick == "NAN": continue
-            
             if tick == "USD":
                 st.session_state.variations[tick] = "→ 0.00 %"
                 df_tmp.at[idx, "Court"] = "$ 1.00"
                 changement = True; continue
 
-            # Traitement Binance (si USDT)
             succ_bin = False
             if tick.endswith("USDT"):
                 for base in ["https://api.binance.com", "https://api.binance.us"]:
@@ -334,7 +331,6 @@ def actualiser_cours_internet(silencieux=False):
                     except: continue 
             if succ_bin: continue 
 
-            # Traitement Vectorisé Yahoo avec prise en compte stricte de la devise YF
             yf_t = mapping_tick_to_yf.get(tick)
             if yf_t and yf_t in hist_data:
                 p_loc, p_prev = hist_data[yf_t]
@@ -344,7 +340,10 @@ def actualiser_cours_internet(silencieux=False):
                 if tick in ["EUR", "CHF", "JPY", "GBP", "CNY", "CAD", "AUD"]:
                     df_tmp.at[idx, "Court"] = format_smart(p_loc, "$", is_price=True)
                 else:
-                    dev = st.session_state.yf_currencies.get(yf_t, "USD")
+                    # Règle d'or : On prend la devise de la Transaction, sinon on fallback sur Yahoo
+                    dev = dev_map.get(tick)
+                    if not dev: dev = st.session_state.yf_currencies.get(yf_t, "USD")
+                    
                     f_dev = 0.01 if dev == "GBP" else 1.0
                     p_usd = p_loc * f_dev
                     if dev != "USD":
@@ -367,46 +366,6 @@ def actualiser_cours_internet(silencieux=False):
 @st.cache_data(ttl=86400) 
 def recuperer_inflation_france():
     inflation_data = {}
-    
-    # 1. Source Primaire : INSEE avec faux headers
-    try:
-        req = urllib.request.Request(
-            "https://www.insee.fr/fr/statistiques/serie/telecharger/001759970?ordre=chronologique&format=csv", 
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7'
-            }
-        )
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            lines = resp.read().decode('utf-8', errors='ignore').split('\n')
-            
-        yearly_indices = {}
-        for line in lines:
-            parts = line.strip().split(';')
-            if len(parts) >= 2 and '-' in parts[0]:
-                try:
-                    year = int(parts[0].split('-')[0])
-                    val = float(parts[1].replace(',', '.').replace('"', '').strip())
-                    if year not in yearly_indices:
-                        yearly_indices[year] = []
-                    yearly_indices[year].append(val)
-                except: pass
-                
-        if yearly_indices:
-            years = sorted(yearly_indices.keys())
-            for i in range(1, len(years)):
-                y = years[i]
-                prev_y = y - 1
-                if prev_y in yearly_indices:
-                    avg_y = sum(yearly_indices[y]) / len(yearly_indices[y])
-                    avg_prev_y = sum(yearly_indices[prev_y]) / len(yearly_indices[prev_y])
-                    inflation = ((avg_y / avg_prev_y) - 1) * 100
-                    if y >= 2023:
-                        inflation_data[y] = round(inflation, 2)
-    except: pass
-    
-    # 2. Source Secondaire : Banque Mondiale (Fallback)
     try:
         req = urllib.request.Request("https://api.worldbank.org/v2/country/FRA/indicator/FP.CPI.TOTL.ZG?format=json&per_page=20", headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -415,55 +374,37 @@ def recuperer_inflation_france():
                 for i in data[1]:
                     if i['value'] is not None:
                         year = int(i['date'])
-                        if year not in inflation_data:
-                            inflation_data[year] = round(float(i['value']), 2)
+                        if year not in inflation_data: inflation_data[year] = round(float(i['value']), 2)
+        if inflation_data: return inflation_data
     except: pass
-    
-    return inflation_data if inflation_data else None
+    return None
 
 def get_historical_fx(devise, date_val):
     d_clean = str(devise).upper().strip()
     if d_clean in ["EUR", ""]: return 1.0
-    t = f"{d_clean}EUR=X"
     try:
         d = pd.to_datetime(date_val, dayfirst=True, errors='coerce')
         if pd.isna(d): return 1.0
-        if d >= pd.Timestamp.now() - pd.Timedelta(days=1):
-            h = yf.Ticker(t).history(period="1d")
-            return float(h['Close'].iloc[-1]) if not h.empty else 1.0
-        h = yf.Ticker(t).history(start=(d - pd.Timedelta(days=5)).strftime('%Y-%m-%d'), end=(d + pd.Timedelta(days=1)).strftime('%Y-%m-%d'))
-        if not h.empty: return float(h['Close'].iloc[-1])
-        h_fb = yf.Ticker(t).history(period="1d")
-        if not h_fb.empty: return float(h_fb['Close'].iloc[-1])
-    except: pass
-    return 1.0
+        if d >= pd.Timestamp.now() - pd.Timedelta(days=1): return float(yf.Ticker(f"{d_clean}EUR=X").history(period="1d")['Close'].iloc[-1])
+        h = yf.Ticker(f"{d_clean}EUR=X").history(start=(d - pd.Timedelta(days=5)).strftime('%Y-%m-%d'), end=(d + pd.Timedelta(days=1)).strftime('%Y-%m-%d'))
+        return float(h['Close'].iloc[-1]) if not h.empty else 1.0
+    except: return 1.0
 
 @st.cache_data(ttl=86400)
 def get_historical_usd_rate(devise, date_val):
     d_clean = str(devise).upper().strip()
     if d_clean in ["USD", ""]: return 1.0
-    t = f"{d_clean}USD=X"
     try:
         d = pd.to_datetime(date_val, dayfirst=True, errors='coerce')
         if pd.isna(d): return 1.0
-        if d >= pd.Timestamp.now() - pd.Timedelta(days=1):
-            h = yf.Ticker(t).history(period="1d")
-            if not h.empty: return float(h['Close'].iloc[-1])
-            return 1.0
-        d_start = d - pd.Timedelta(days=5)
-        d_end = d + pd.Timedelta(days=1)
-        h = yf.Ticker(t).history(start=d_start.strftime('%Y-%m-%d'), end=d_end.strftime('%Y-%m-%d'))
-        if not h.empty:
-            return float(h['Close'].iloc[-1])
-        h_fb = yf.Ticker(t).history(period="1d")
-        if not h_fb.empty: return float(h_fb['Close'].iloc[-1])
-    except: pass
-    return 1.0
+        if d >= pd.Timestamp.now() - pd.Timedelta(days=1): return float(yf.Ticker(f"{d_clean}USD=X").history(period="1d")['Close'].iloc[-1])
+        h = yf.Ticker(f"{d_clean}USD=X").history(start=(d - pd.Timedelta(days=5)).strftime('%Y-%m-%d'), end=(d + pd.Timedelta(days=1)).strftime('%Y-%m-%d'))
+        return float(h['Close'].iloc[-1]) if not h.empty else 1.0
+    except: return 1.0
 
 def calcul_frais_km(km, cv):
     try:
-        bar_def = '{"3":[0.529, 0.316, 1065, 0.370], "4":[0.606, 0.340, 1330, 0.407], "5":[0.636, 0.357, 1395, 0.427], "6":[0.665, 0.374, 1457, 0.447], "7":[0.697, 0.394, 1515, 0.470]}'
-        bareme = json.loads(st.session_state.config.get("urssaf_bareme", bar_def))
+        bareme = json.loads(st.session_state.config.get("urssaf_bareme", '{"3":[0.529, 0.316, 1065, 0.370], "4":[0.606, 0.340, 1330, 0.407], "5":[0.636, 0.357, 1395, 0.427], "6":[0.665, 0.374, 1457, 0.447], "7":[0.697, 0.394, 1515, 0.470]}'))
         c = bareme.get(str(cv), bareme["7"])
     except: c = [0.697, 0.394, 1515, 0.470]
     return km * c[0] if km <= 5000 else (km * c[1] + c[2] if km <= 20000 else km * c[3])
@@ -478,21 +419,17 @@ def calcul_impot_ir(rev, parts, stat, apply_decote=True):
     r3 = float(st.session_state.config.get("tax_rate_3", 0.30))
     r4 = float(st.session_state.config.get("tax_rate_4", 0.41))
     r5 = float(st.session_state.config.get("tax_rate_5", 0.45))
-    
     tr = [(t1, 0.0), (t2, r2), (t3, r3), (t4, r4), (999999999.0, r5)]
     prev_lim = 0.0
     for lim, tx in tr:
         if qf > prev_lim: imp += (min(qf, lim) - prev_lim) * tx
         prev_lim = lim
     imp *= parts
-    
     if apply_decote:
         lim_decote = float(st.session_state.config.get("decote_lim_cel", 2002)) if "Cél" in stat else float(st.session_state.config.get("decote_lim_mar", 3300))
         base_decote = float(st.session_state.config.get("decote_base_cel", 906)) if "Cél" in stat else float(st.session_state.config.get("decote_base_mar", 1493))
         if imp <= lim_decote: imp = max(0, imp - (base_decote - (imp * 0.4525)))
     return 0.0 if imp < 61 else imp
-
-# --- MÉCANIQUES FISCALES EXACTES (V3) ---
 
 def get_action_tax_data(df_transactions, target_year):
     df_a = df_transactions.copy()
@@ -541,7 +478,6 @@ def get_crypto_tax_data(df_transactions, target_year):
                     if c_tick == t: valeur_globale += c_qty * (prix_cession_eur / qte if qte > 0 else 0.0)
                     else:
                         try:
-                            # Remontée du prix YF pour le jour précis
                             h_px_usd = float(yf.Ticker(f"{c_tick}-USD").history(start=(row['Date_DT'] - pd.Timedelta(days=3)).strftime('%Y-%m-%d'), end=(row['Date_DT'] + pd.Timedelta(days=2)).strftime('%Y-%m-%d'))['Close'].iloc[-1])
                             valeur_globale += (c_qty * h_px_usd * get_historical_fx("USD", row['Date']))
                         except: pass
@@ -864,6 +800,7 @@ elif page_choisie == "⚖️ Rééquilibrage":
     df = st.session_state.donnees
     c_usd = sum(extraire_nombre(r["Valeur totale"]) for _, r in df[df["Type"] == "💵 Cash"].iterrows())
     base = sum(extraire_nombre(r["Valeur totale"]) for _, r in df.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0) + c_usd
+    
     if base > 0:
         st.info(f"💡 Liquidités disponibles pour investissement (Type '💵 Cash' pur) : **{format_smart(c_usd, '$')}**")
         res = []
@@ -977,6 +914,9 @@ elif page_choisie == "🌴 Retraite":
         df_years = df_viz.dropna(subset=['Date_DT']).sort_values('Date_DT').groupby(df_viz['Date_DT'].dt.year).last().reset_index()
         df_years['TWR_mult'] = 1 + (df_years['Score TWR %'] / 100); df_years['TWR_mult_prev'] = df_years['TWR_mult'].shift(1).fillna(1.0)
         df_years['Performance brute (%)'] = ((df_years['TWR_mult'] / df_years['TWR_mult_prev']) - 1) * 100
+        jours_annee_1 = (df_viz[df_viz['Année'] == df_viz['Date_DT'].min().year]['Date_DT'].max() - df_viz['Date_DT'].min()).days
+        if jours_annee_1 > 0 and jours_annee_1 < 330 and not df_years[df_years['Année'] == df_viz['Date_DT'].min().year].empty:
+            df_years.loc[df_years[df_years['Année'] == df_viz['Date_DT'].min().year].index, 'Performance brute (%)'] = (((1 + df_years.loc[df_years[df_years['Année'] == df_viz['Date_DT'].min().year].index, 'Performance brute (%)'].values[0] / 100.0) ** (365.25 / jours_annee_1)) - 1) * 100.0
         df_historique = df_years[df_years['Année'] < annee_en_cours]
         if not df_historique.empty: moy_brute_hist = round(df_historique['Performance brute (%)'].mean(), 2)
 
@@ -1127,10 +1067,8 @@ elif page_choisie == "🏛️ Fiscalité":
         plus_values_actions = moins_values_actions = plus_values_crypto = moins_values_crypto = 0.0
     else:
         st.write("Ce tableau lit les transactions déjà enregistrées et figées dans Google Sheets.")
-        
         plus_values_actions = df_actions[df_actions["PV Num"] > 0]["PV Num"].sum() if not df_actions.empty else 0.0
         moins_values_actions = abs(df_actions[df_actions["PV Num"] < 0]["PV Num"].sum()) if not df_actions.empty else 0.0
-        
         plus_values_crypto = df_cryptos[df_cryptos["PV Num"] > 0]["PV Num"].sum() if not df_cryptos.empty else 0.0
         moins_values_crypto = abs(df_cryptos[df_cryptos["PV Num"] < 0]["PV Num"].sum()) if not df_cryptos.empty else 0.0
 
@@ -1145,7 +1083,6 @@ elif page_choisie == "🏛️ Fiscalité":
                 df_actif_a = df_actions[df_actions["Actif"] == actif] if not df_actions.empty else pd.DataFrame()
                 df_actif_c = df_cryptos[df_cryptos["Actif"] == actif] if not df_cryptos.empty else pd.DataFrame()
                 df_actif = pd.concat([df_actif_a, df_actif_c])
-                
                 st.dataframe(df_actif.drop(columns=["Actif", "Cat", "PV Num"]), column_config={c: st.column_config.TextColumn(c) for c in df_actif.drop(columns=["Actif", "Cat", "PV Num"]).columns}, use_container_width=True, hide_index=True)
                 res_actif = df_actif["PV Num"].sum()
                 st.markdown(f"*Bilan de l'année pour **{actif}** : <strong style='color:{'green' if res_actif >= 0 else 'red'}'>{format_smart(res_actif, '€', force_sign=True)}</strong>*", unsafe_allow_html=True)
@@ -1193,7 +1130,7 @@ elif page_choisie == "🏛️ Fiscalité":
     
     if bilan_net_actions > 0: st.markdown(f"> ⚠️ **Attention :** L'impôt supplémentaire sur vos plus-values boursières (**{format_smart(cout_bareme if choix == 'Barème' else cout_pfu, '€')}**) n'est pas prélevé tous les mois. Il sera à régler en une fois lors de la régularisation de septembre.")
 
-    st.divider(); st.subheader("📝 4. Résumé pour votre déclaration d'impôts"); st.caption("⚠️ *Avertissement : Ce simulateur est une aide indicative et utilise une approximation temporelle de la valeur globale de votre portefeuille crypto.*")
+    st.divider(); st.subheader("📝 4. Résumé pour votre déclaration d'impôts"); st.caption("⚠️ *Avertissement : Ce simulateur est une aide indicative.*")
     c_decl1, c_decl2 = st.columns(2)
     with c_decl1:
         st.markdown("### 🔹 Formulaire 3916 (Comptes étrangers)\n- **Case 8UU (sur la 2042) :** À cocher.\n- **Informations à fournir sur le 3916 :**\n  - *Intitulé :* Swissquote Bank SA\n  - *Adresse :* Chemin de la Crétaux 33, 1196 Gland, Suisse")
