@@ -1143,7 +1143,9 @@ elif page_choisie == "🌴 Retraite":
     st.divider()
 
     years_range = list(range(annee_en_cours, annee_retraite))
-    cap_a_nom = cap_b_nom = capital_initial
+    
+    cap_v_a = cap_v_b = capital_initial
+    gains_a = gains_b = 0.0
     app_a = app_b = apport_mensuel
     inf_rate, r_a, r_b = inflation_estimee / 100.0, rendement_a / 100.0, rendement_b / 100.0
     r_a_m, r_b_m = (1 + r_a)**(1/12) - 1, (1 + r_b)**(1/12) - 1
@@ -1151,33 +1153,54 @@ elif page_choisie == "🌴 Retraite":
     trajectory_data = []
     for y in years_range:
         for _ in range(12 if y > annee_en_cours else max(1, 13 - datetime.datetime.now().month)):
-            cap_a_nom = cap_a_nom * (1 + r_a_m) + app_a
-            cap_b_nom = cap_b_nom * (1 + r_b_m) + app_b
+            int_a = (cap_v_a + gains_a) * r_a_m
+            gains_a += int_a
+            cap_v_a += app_a
             
-        app_a *= (1 + inf_rate) ; app_b *= (1 + inf_rate)
+            int_b = (cap_v_b + gains_b) * r_b_m
+            gains_b += int_b
+            cap_v_b += app_b
+            
+        app_a *= (1 + inf_rate)
+        app_b *= (1 + inf_rate)
         years_diff = y - annee_en_cours + 1
-        cap_a_real, cap_b_real = cap_a_nom / ((1 + inf_rate)**years_diff), cap_b_nom / ((1 + inf_rate)**years_diff)
+        
+        cap_a_nom = cap_v_a + gains_a
+        cap_b_nom = cap_v_b + gains_b
+        
+        cap_a_real = cap_a_nom / ((1 + inf_rate)**years_diff)
+        cap_b_real = cap_b_nom / ((1 + inf_rate)**years_diff)
         trajectory_data.append({"Année": y, "Capital Net (Scénario A)": round(cap_a_real, 2), "Capital Net (Scénario B)": round(cap_b_real, 2)})
 
     tx_r = max(0.0, ((1.08)/(1+inf_rate))-1)
     st.subheader(f"🎯 Capital projeté au 1er Janvier {annee_retraite}")
     colA, colB = st.columns(2)
     
+    total_a = cap_v_a + gains_a
+    ratio_gains_a = gains_a / total_a if total_a > 0 else 0.0
+    rente_br_a = cap_a_real * tx_r / 12
+    rente_net_a = rente_br_a * (1 - (ratio_gains_a * taxe_plus_value / 100.0))
+
     with colA:
         st.markdown(f"### Scénario A (Moyenne : {rendement_a:.2f} % / an)")
         afficher_montant_double("💰 Valeur Brute du Magot 🔒", cap_a_nom)
         afficher_montant_double("🛒 Valeur Nette (Pouvoir d'achat) 🔒", cap_a_real)
         st.write("")
-        afficher_montant_double("Rente Mensuelle Nette (Avant impôts)", cap_a_real*tx_r/12, couleur_valeur="#2ecc71")
-        afficher_montant_double(f"Après Impôts ({taxe_plus_value:.1f}%)", (cap_a_real*tx_r/12)*(1-taxe_plus_value/100.0), couleur_valeur="#e67e22", taille="medium")
+        afficher_montant_double("Rente Mensuelle Nette (Avant impôts)", rente_br_a, couleur_valeur="#2ecc71")
+        afficher_montant_double(f"Après Impôts ({taxe_plus_value:.1f}% sur {ratio_gains_a*100:.1f}% de gains)", rente_net_a, couleur_valeur="#e67e22", taille="medium")
+
+    total_b = cap_v_b + gains_b
+    ratio_gains_b = gains_b / total_b if total_b > 0 else 0.0
+    rente_br_b = cap_b_real * tx_r / 12
+    rente_net_b = rente_br_b * (1 - (ratio_gains_b * taxe_plus_value / 100.0))
 
     with colB:
         st.markdown(f"### Scénario B (Fixe : {rendement_b:.2f} % / an)")
         afficher_montant_double("💰 Valeur Brute du Magot 🔒", cap_b_nom)
         afficher_montant_double("🛒 Valeur Nette (Pouvoir d'achat) 🔒", cap_b_real)
         st.write("")
-        afficher_montant_double("Rente Mensuelle Nette (Avant impôts)", cap_b_real*tx_r/12, couleur_valeur="#3498db")
-        afficher_montant_double(f"Après Impôts ({taxe_plus_value:.1f}%)", (cap_b_real*tx_r/12)*(1-taxe_plus_value/100.0), couleur_valeur="#e67e22", taille="medium")
+        afficher_montant_double("Rente Mensuelle Nette (Avant impôts)", rente_br_b, couleur_valeur="#3498db")
+        afficher_montant_double(f"Après Impôts ({taxe_plus_value:.1f}% sur {ratio_gains_b*100:.1f}% de gains)", rente_net_b, couleur_valeur="#e67e22", taille="medium")
 
     if trajectory_data:
         st.divider()
