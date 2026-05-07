@@ -105,8 +105,18 @@ def nettoyer_dataframe(df):
             tick = str(row.get("Ticker", "")).upper()
             df.at[idx, "Type"] = "💵 Cash" if est_devise_liquide(tick) else "₿ Crypto" if any(c in tick for c in ["BTC", "ETH", "USDT"]) else "🛢️ Action"
     else:
-        # Nettoyage des emojis existants dans la base pour éviter les bugs
-        df["Type"] = df["Type"].astype(str).str.replace(r'[^\w\s]', '', regex=True).str.strip()
+        # Re-sécurisation stricte des Types pour correspondre aux menus déroulants
+        for idx, row in df.iterrows():
+            val = str(row.get("Type", "")).upper()
+            if "ACTION" in val: df.at[idx, "Type"] = "🛢️ Action"
+            elif "OBLIGATION" in val: df.at[idx, "Type"] = "📜 Obligation"
+            elif "OR" in val: df.at[idx, "Type"] = "💰 Or"
+            elif "CRYPTO" in val: df.at[idx, "Type"] = "₿ Crypto"
+            elif "RÉSERVE" in val or "RESERVE" in val: df.at[idx, "Type"] = "🏦 Cash réserve"
+            elif "CASH" in val: df.at[idx, "Type"] = "💵 Cash"
+            else: 
+                tick = str(row.get("Ticker", "")).upper()
+                df.at[idx, "Type"] = "💵 Cash" if est_devise_liquide(tick) else "₿ Crypto" if any(c in tick for c in ["BTC", "ETH", "USDT"]) else "🛢️ Action"
             
     for col in cols_finales:
         if col not in df.columns: df[col] = 0.0 if col == "Pourcentage (%)" else ("$ 0.00" if col in ["Court", "Valeur totale"] else "")
