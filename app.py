@@ -144,7 +144,8 @@ def nettoyer_dataframe(df):
             df.at[idx, "Type"] = "💵 Cash" if est_devise_liquide(tick) else "₿ Crypto" if any(c in tick for c in ["BTC", "ETH", "USDT"]) else "🛢️ Action"
     else:
         for idx, row in df.iterrows():
-            t = str(row.get("Type", "")).astype(str).str.replace(r'[^\w\s]', '', regex=True).str.strip().upper()
+            # CORRECTION DU BUG DE SYNTAXE ICI
+            t = re.sub(r'[^\w\s]', '', str(row.get("Type", ""))).strip().upper()
             if "ACTION" in t: df.at[idx, "Type"] = "🛢️ Action"
             elif "OBLIGATION" in t: df.at[idx, "Type"] = "📜 Obligation"
             elif "OR" in t: df.at[idx, "Type"] = "💰 Or"
@@ -1007,9 +1008,9 @@ elif page_choisie == "🏖️ Suivi":
         df_v['DT'] = pd.to_datetime(df_v['Date'], dayfirst=True, errors='coerce')
         
         for c in ["Capital investi", "Actifs Stratégiques", "Total Global", "Evolution actifs $", "Evolution cumulée $", "TG_Evolution cumulée $"]:
-            df_v[c] = df_v[c].apply(lambda x: format_smart(x, "$"))
+            df_v[c] = df_v[c].apply(lambda x: format_smart(x, "$", force_sign=("Evolution" in c)))
         for c in ["Evolution actifs %", "Evolution cumulée %", "Score TWR %", "TG_Evolution cumulée %", "TG_Score TWR %"]:
-            df_v[c] = df_v[c].apply(lambda x: format_smart(x, "%"))
+            df_v[c] = df_v[c].apply(lambda x: format_smart(x, "%", force_sign=True))
             
         config_suivi = {c: st.column_config.TextColumn(c + " 🔒") for c in df_v.columns if c != 'DT'}
         
