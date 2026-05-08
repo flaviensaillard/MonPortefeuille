@@ -200,6 +200,7 @@ def get_pru_and_qty(ticker, df_transactions):
     for _, r in df_tick.iterrows():
         typ, qte, net_local = str(r['Type']).lower(), extraire_nombre(r['Quantité']), extraire_nombre(r['Montant Net'])
         devise = str(r.get('Devise', 'USD')).strip().upper()
+        # Strict=False car on lit l'historique : si Yahoo plante sur une date passée on ne bloque pas l'app.
         net_usd = net_local * get_historical_usd_rate(devise, r['Date'], strict=False)
         if "achat" in typ:
             total_cost_usd += net_usd; total_qty += qte
@@ -226,6 +227,7 @@ def recalculer_toute_la_base_projections(df):
     df_t["Total Global Prev"] = df_t["Total Global"].shift(1).fillna(df_t["Total Global"])
     df_t["D_Cap"] = df_t["Capital investi"] - df_t["Capital investi Prev"]
     
+    # Evolution Strat
     df_t["Evolution actifs $"] = (df_t["Actifs Stratégiques"] - df_t["Actifs Stratégiques Prev"]) - df_t["D_Cap"]
     df_t.loc[0, "Evolution actifs $"] = 0.0
     df_t["Evolution actifs %"] = (df_t["Evolution actifs $"] / df_t["Actifs Stratégiques Prev"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
@@ -233,15 +235,18 @@ def recalculer_toute_la_base_projections(df):
     df_t["Evolution cumulée $"] = df_t["Actifs Stratégiques"] - df_t["Capital investi"]
     df_t["Evolution cumulée %"] = (df_t["Evolution cumulée $"] / df_t["Capital investi"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     
+    # TWR Strat
     base_twr = df_t["Actifs Stratégiques Prev"] + df_t["D_Cap"]
     df_t["TWR_Fact"] = 1 + (df_t["Evolution actifs $"] / base_twr).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     df_t.loc[0, "TWR_Fact"] = 1 + (df_t.loc[0, "Evolution cumulée $"] / df_t.loc[0, "Capital investi"] if df_t.loc[0, "Capital investi"] != 0 else 0.0)
     df_t["Score TWR %"] = (df_t["TWR_Fact"].cumprod() - 1) * 100
     
+    # Evolution Total Global
     df_t["Evo_TG"] = (df_t["Total Global"] - df_t["Total Global Prev"]) - df_t["D_Cap"]
     df_t["TG_Evolution cumulée $"] = df_t["Total Global"] - df_t["Capital investi"]
     df_t["TG_Evolution cumulée %"] = (df_t["TG_Evolution cumulée $"] / df_t["Capital investi"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     
+    # TWR Total Global
     base_tg_twr = df_t["Total Global Prev"] + df_t["D_Cap"]
     df_t["TG_TWR_Fact"] = 1 + (df_t["Evo_TG"] / base_tg_twr).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     df_t.loc[0, "TG_TWR_Fact"] = 1 + (df_t.loc[0, "TG_Evolution cumulée $"] / df_t.loc[0, "Capital investi"] if df_t.loc[0, "Capital investi"] != 0 else 0.0)
@@ -400,7 +405,7 @@ def recuperer_inflation_france():
     try:
         req = urllib.request.Request(
             "https://www.insee.fr/fr/statistiques/serie/telecharger/001759970?ordre=chronologique&format=csv", 
-            headers={'User-Agent': 'Mozilla/5.0', 'Accept': '*/*'}
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Accept': 'text/html,*/*'}
         )
         with urllib.request.urlopen(req, timeout=8) as resp:
             lines = resp.read().decode('utf-8', errors='ignore').split('\n')
@@ -1193,13 +1198,11 @@ elif page_choisie == "🏛️ Fiscalité":
                 df_actif_a = df_actions[df_actions["Actif"] == actif] if not df_actions.empty else pd.DataFrame()
                 df_actif_c = df_cryptos[df_cryptos["Actif"] == actif] if not df_cryptos.empty else pd.DataFrame()
                 
-                # Formatage type Antisèche Fiscale
                 if not df_actif_a.empty:
                     qte_totale = df_actif_a["Qte Num"].sum()
                     cession_totale = df_actif_a["Cession Num"].sum()
                     acq_totale = df_actif_a["Acq Num"].sum()
                     pv_totale = df_actif_a["PV Num"].sum()
-                    
                     valeur_unitaire_cession = cession_totale / qte_totale if qte_totale > 0 else 0.0
                     valeur_unitaire_acq = acq_totale / qte_totale if qte_totale > 0 else 0.0
                     
@@ -1208,11 +1211,12 @@ elif page_choisie == "🏛️ Fiscalité":
                     st.markdown(f"- **512 - Date de la cession :** `31/12/{annee_fiscale}`")
                     st.markdown(f"- **514 - Valeur unitaire de cession :** `{format_smart(valeur_unitaire_cession, '€', is_price=True)}`")
                     st.markdown(f"- **515 - Nombre de titres cédés :** `{format_smart(qte_totale, is_price=True)}`")
-                    st.markdown(f"- **516 - Prix de cession global :** `{format_smart(cession_totale, '€')}`")
+                    st.markdown(f"- **516 ou 513 - Prix de cession global :** `{format_smart(cession_totale, '€')}`")
                     st.markdown(f"- **517 - Frais de cession :** `0 €` *(Déjà déduits dans le logiciel)*")
                     st.markdown(f"- **520 - Prix d'acquisition unitaire :** `{format_smart(valeur_unitaire_acq, '€', is_price=True)}`")
-                    st.markdown(f"- **521 - Prix d'acquisition global :** `{format_smart(acq_totale, '€')}`")
+                    st.markdown(f"- **521 ou 519 - Prix d'acquisition global :** `{format_smart(acq_totale, '€')}`")
                     st.markdown(f"- **522 - Frais d'acquisition :** `0 €` *(Déjà inclus dans le PRU)*")
+                    st.markdown("- **Imputation préalable des moins-values (Annulation) :** `Non (Laissez décoché)`")
                     st.markdown(f"- **526 - Moins-values imputées :** `0 €`")
                     st.info(f"**Bilan pour {actif} :** {format_smart(pv_totale, '€', force_sign=True)}")
                     
@@ -1276,11 +1280,19 @@ elif page_choisie == "🏛️ Fiscalité":
     
     if bilan_net_actions > 0: st.markdown(f"> ⚠️ **Attention :** L'impôt supplémentaire sur vos plus-values boursières (**{format_smart(cout_bareme if choix == 'Barème' else cout_pfu, '€')}**) n'est pas prélevé tous les mois. Il sera à régler en une fois lors de la régularisation de septembre.")
 
-    st.divider(); st.subheader("📝 4. Résumé pour la Déclaration Principale (2042)"); st.caption("⚠️ *Avertissement : Ce simulateur est une aide indicative.*")
+    st.divider(); st.subheader("📝 4. Résumé pour la Déclaration Principale (2042 & Synthèse)"); st.caption("⚠️ *Avertissement : Ce simulateur est une aide indicative.*")
     c_decl1, c_decl2 = st.columns(2)
     with c_decl1:
         st.markdown("### 🔹 Formulaire 3916 (Comptes étrangers)\n- **Case 8UU (sur la 2042) :** À cocher.\n- **Informations à fournir sur le 3916 :**\n  - *Intitulé :* Swissquote Bank SA\n  - *Adresse :* Chemin de la Crétaux 33, 1196 Gland, Suisse")
+        st.markdown("### 🔹 Formulaire 2074 (Actions / ETF)")
+        if plus_values_actions > 0: st.markdown(f"- **Ligne 905 :** {format_smart(plus_values_actions, '€')}")
+        if moins_values_actions > 0: st.markdown(f"- **Ligne 913 :** {format_smart(moins_values_actions, '€')}")
     with c_decl2:
+        st.markdown("### 🔹 Formulaire 2086 (Cryptomonnaies)")
+        if bilan_net_crypto > 0: st.markdown(f"- **Case 3AN** (Plus-value) : **{format_smart(bilan_net_crypto, '€')}**")
+        elif bilan_net_crypto < 0: st.markdown(f"- **Case 3BN** (Moins-value) : **{format_smart(abs(bilan_net_crypto), '€')}**")
+        else: st.markdown("- Aucune plus ou moins-value crypto cette année.")
+        
         st.markdown("### 🔹 Déclaration Principale (Formulaire 2042)")
         if bilan_net_actions > 0:
             st.markdown(f"- **Case 3VG** (Plus-values nettes) : Indiquer **{format_smart(bilan_net_actions, '€')}**")
@@ -1290,5 +1302,24 @@ elif page_choisie == "🏛️ Fiscalité":
                 st.markdown("- **Case 2OP** : **À laisser DÉCOCHÉE**.")
         elif bilan_net_actions < 0:
             st.markdown(f"- **Case 3VH** (Moins-values nettes) : Indiquer **{format_smart(abs(bilan_net_actions), '€')}**")
+            
+    st.divider()
+    st.subheader("🧭 Le GPS Fiscal : Cadres 11 et 12")
+    if bilan_net_actions < 0:
+        st.info(f"**Diagnostic :** Vous êtes en perte nette sur l'année ({format_smart(bilan_net_actions, '€')}).")
+        st.markdown(f"1. Ne remplissez pas le **Cadre 11** de la 2074.")
+        st.markdown(f"2. Allez directement au **Cadre 12** (« Situation au 31/12/{annee_fiscale} »).")
+        st.markdown(f"3. Dans la case de l'année **{annee_fiscale}**, reportez : **{format_smart(abs(bilan_net_actions), '€')}**.")
+        st.write("*Cette moins-value effacera vos futures plus-values lors des 10 prochaines années.*")
+    elif bilan_net_actions > 0:
+        st.success(f"**Diagnostic :** Vous êtes en gain net sur l'année ({format_smart(bilan_net_actions, '€')}).")
+        if choix == "PFU":
+            st.markdown(f"1. Vous avez choisi la **Flat Tax (PFU)** : L'abattement pour durée de détention ne s'applique pas.")
+            st.markdown(f"2. Dans le **Cadre 11**, remplissez uniquement les colonnes de l'**Étape 1**.")
+            st.markdown(f"3. Ne remplissez ni la colonne F, ni la colonne G.")
         else:
-            st.markdown("- Aucune plus-value ou moins-value boursière à reporter.")
+            st.markdown(f"1. Vous avez opté pour le **Barème Progressif (Case 2OP)** : L'abattement pour durée de détention s'applique.")
+            st.markdown(f"2. Dans le **Cadre 11**, vous devez remplir les colonnes de l'**Étape 1** ET **les colonnes F ou G**.")
+            st.markdown(f"3. *Rappel : L'abattement dépend du type de titres (acquis avant ou après le 1er janvier 2018) et de votre temps de détention réel. Aidez-vous de la fiche 2074-NOT-ABT.*")
+    else:
+        st.write("Pas de consignes spécifiques pour le Cadre 11/12 cette année (Bilan à 0).")
