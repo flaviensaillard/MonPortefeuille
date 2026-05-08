@@ -6,7 +6,12 @@ def format_smart(val, symbol="", force_sign=False, is_price=False):
     if pd.isna(val) or str(val).strip() == "": return ""
     try:
         v = float(val)
-        dec = 6 if is_price or (abs(v) > 0 and abs(v) < 1) else 2
+        # Correction : on force 2 décimales si c'est un pourcentage
+        if symbol == "%":
+            dec = 2
+        else:
+            dec = 6 if is_price or (abs(v) > 0 and abs(v) < 1) else 2
+            
         s = f"{v:+,.{dec}f}" if force_sign else f"{v:,.{dec}f}"
         parts = s.split('.')
         int_part = parts[0].replace(',', ' ')
