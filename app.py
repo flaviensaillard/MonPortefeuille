@@ -1171,8 +1171,6 @@ elif page_choisie == "🏛️ Fiscalité":
     st.subheader(f"📝 2. L'Antisèche du Fisc (Revenus {annee_fiscale})")
     st.write("Naviguez dans les dossiers ci-dessous pour afficher les lignes exactes à remplir sur le site des impôts, adaptées à votre situation.")
 
-    out_2042_container = st.empty()
-
     # --- DOSSIER 1 : FORMULAIRE 2042 ---
     exp_2042 = st.expander("📁 Formulaire 2042 (Déclaration Principale)", expanded=True)
     with exp_2042:
@@ -1263,6 +1261,11 @@ elif page_choisie == "🏛️ Fiscalité":
             st.caption("*Note : L'algorithme a ajusté la mathématique illogique des IFU Revolut pour qu'elle soit légalement recevable sur le site des impôts français.*")
 
     # --- CALCULS GLOBAUX POUR LA RECOMMANDATION ET 2042 ---
+    parts = 1.0 if "Célibataire" in statut else 2.0
+    if enfants == 1: parts += 0.5
+    elif enfants == 2: parts += 1.0
+    elif enfants >= 3: parts += 1.0 + (enfants - 2)
+
     revenu_base_net_global = (salaire_1 - max(salaire_1 * 0.10, frais_reels_1)) + (salaire_2 - max(salaire_2 * 0.10, frais_reels_2)) + interets_net
     impot_salaires_seuls = calcul_impot_ir(revenu_base_net_global, parts, statut, apply_decote=True)
     
@@ -1428,7 +1431,7 @@ elif page_choisie == "🏛️ Fiscalité":
     elif bilan_net_actions <= 0:
         pass
     else:
-        taux_moyen_bareme = (cout_bareme / bilan_net_actions) * 100
+        taux_moyen_bareme = (cout_bareme / bilan_net_actions) * 100 if bilan_net_actions > 0 else 0.0
         if choix == "Barème":
             st.success("✅ **Le Barème Progressif est plus avantageux pour vos plus-values !**")
             st.write(f"Sur vos {format_smart(bilan_net_actions, '€')} de plus-values nettes :\n- Avec la Flat Tax ({st.session_state.config.get('tax_pfu', 30.0)}%) : l'impôt serait de **{format_smart(cout_pfu, '€')}**.\n- Avec le Barème : l'impôt est de **{format_smart(cout_bareme, '€')}** *(Taux effectif : {format_smart(taux_moyen_bareme, '%')} )*.")
