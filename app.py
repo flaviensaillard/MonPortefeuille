@@ -163,7 +163,6 @@ def _assign_type_v4(row):
     else: return "💵 Cash" if est_devise_liquide(tick) else "₿ Crypto" if is_crypto_ticker(tick) else "🛢️ Action"
 
 def nettoyer_dataframe(df):
-    """V4 : Entièrement vectorisé, fin de la boucle iterrows pour une vitesse d'exécution instantanée."""
     cols_finales = ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)", "Devise Cotation"]
     if df.empty: return pd.DataFrame(columns=cols_finales)
     
@@ -194,7 +193,7 @@ def get_pru_and_qty(ticker, df_transactions):
     for _, r in df_tick.iterrows():
         typ, qte, net_local = str(r['Type']).lower(), extraire_nombre(r['Quantité']), extraire_nombre(r['Montant Net'])
         devise = str(r.get('Devise', 'USD')).strip().upper()
-        # Strict=False car on lit l'historique : si Yahoo plante sur une date de 2021, on ne bloque pas l'app.
+        # Strict=False car on lit l'historique : si Yahoo plante sur une date passée on ne bloque pas l'app.
         net_usd = net_local * get_historical_usd_rate(devise, r['Date'], strict=False)
         if "achat" in typ:
             total_cost_usd += net_usd; total_qty += qte
@@ -206,7 +205,6 @@ def get_pru_and_qty(ticker, df_transactions):
     return round(total_cost_usd / total_qty if total_qty > 0 else 0.0, 6), round(total_qty, 6)
 
 def recalculer_toute_la_base_projections(df):
-    """V4 : Calcul matriciel (Vectorisation Pandas) : Extrêmement rapide même avec des milliers de jours."""
     if df is None or df.empty: return df
     df_t = df.copy()
     for i, nom in enumerate(["Date", "Capital investi", "Actifs Stratégiques", "Total Global"]):
@@ -260,7 +258,6 @@ def recalculer_totaux_locaux():
         st.session_state.donnees = df.drop(columns=["Val_Calc"])
 
 def calculer_metriques_jour(df_actuel, variations):
-    """V4 : Nettoyage complet de la boucle iterrows pour le tableau de bord."""
     if df_actuel.empty: return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     
     df = df_actuel.copy()
@@ -401,7 +398,7 @@ def recuperer_inflation_france():
     try:
         req = urllib.request.Request(
             "https://www.insee.fr/fr/statistiques/serie/telecharger/001759970?ordre=chronologique&format=csv", 
-            headers={'User-Agent': 'Mozilla/5.0', 'Accept': '*/*'}
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36', 'Accept': 'text/html,*/*'}
         )
         with urllib.request.urlopen(req, timeout=8) as resp:
             lines = resp.read().decode('utf-8', errors='ignore').split('\n')
@@ -437,7 +434,6 @@ def recuperer_inflation_france():
     return inflation_data if inflation_data else None
 
 def get_historical_fx(devise, date_val, strict=False):
-    """V4 : Sécurité Anti-Crash ajoutée."""
     d_clean = str(devise).upper().strip()
     if d_clean in ["EUR", ""]: return 1.0
     t = f"{d_clean}EUR=X"
@@ -458,7 +454,6 @@ def get_historical_fx(devise, date_val, strict=False):
 
 @st.cache_data(ttl=86400)
 def get_historical_usd_rate(devise, date_val, strict=False):
-    """V4 : Sécurité Anti-Crash ajoutée."""
     d_clean = str(devise).upper().strip()
     if d_clean in ["USD", ""]: return 1.0
     t = f"{d_clean}USD=X"
@@ -474,7 +469,7 @@ def get_historical_usd_rate(devise, date_val, strict=False):
             h_fb = yf.Ticker(t).history(period="1d")
             if not h_fb.empty: return float(h_fb['Close'].iloc[-1])
     except Exception as e: pass
-    if strict: raise ValueError(f"⚠️ Échec réseau : Impossible de vérifier le taux {d_clean}/USD auprès de Yahoo. Transaction annulée par sécurité. Réessayez.")
+    if strict: raise ValueError(f"⚠️ Échec réseau : Impossible de vérifier le taux {d_clean}/USD. Transaction annulée par sécurité. Réessayez.")
     return 1.0
 
 def calcul_frais_km(km, cv):
@@ -1101,7 +1096,7 @@ elif page_choisie == "🏛️ Fiscalité":
             use_frais_2 = st.checkbox("Déclarer aux frais réels (Conjoint)", value=bool(int(st.session_state.config.get("f_u2", 0))), key="in_u2", on_change=update_fiscal_config)
             if use_frais_2:
                 km_2 = st.number_input("Kilomètres annuels (Trajet pro) - Conjoint ✍️", min_value=0, value=int(st.session_state.config.get("f_k2", 0)), step=1000, key="in_k2", on_change=update_fiscal_config)
-                cv_2 = st.selectbox("Puissance du véhicule (CV) - Conjoint ✍️", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv1", 5))), key="in_cv2", on_change=update_fiscal_config)
+                cv_2 = st.selectbox("Puissance du véhicule (CV) - Conjoint ✍️", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv2", 5))), key="in_cv2", on_change=update_fiscal_config)
                 repas_2 = st.number_input("Jours de repas au travail - Conjoint ✍️", min_value=0, value=int(st.session_state.config.get("f_r2", 0)), step=10, key="in_r2", on_change=update_fiscal_config)
                 frais_reels_2 = calcul_frais_km(km_2, cv_2) + (repas_2 * float(st.session_state.config.get("frais_repas", 5.35)))
                 st.info(f"💰 Frais Réels estimés (Conjoint) : **{format_smart(frais_reels_2, '€')}**")
@@ -1220,8 +1215,13 @@ elif page_choisie == "🏛️ Fiscalité":
         if bilan_net_crypto > 0: st.markdown(f"- **Case 3AN** (Plus-value) : **{format_smart(bilan_net_crypto, '€')}**")
         elif bilan_net_crypto < 0: st.markdown(f"- **Case 3BN** (Moins-value) : **{format_smart(abs(bilan_net_crypto), '€')}**")
         else: st.markdown("- Aucune plus ou moins-value crypto cette année.")
+        
         st.markdown("### 🔹 Déclaration Principale (Formulaire 2042)")
         if bilan_net_actions > 0:
             st.markdown(f"- **Case 3VG** (Plus-values nettes) : Indiquer **{format_smart(bilan_net_actions, '€')}**")
-            st.markdown("- **Case 2OP** : **À cocher absolument**.") if choix == "Barème" else st.markdown("- **Case 2OP** : **À laisser DÉCOCHÉE**.")
-        elif bilan_net_actions < 0: st.markdown(f"- **Case 3VH** (Moins-values nettes) : Indiquer **{format_smart(abs(bilan_net_actions), '€')}**")
+            if choix == "Barème":
+                st.markdown("- **Case 2OP** : **À cocher absolument**.")
+            else:
+                st.markdown("- **Case 2OP** : **À laisser DÉCOCHÉE**.")
+        elif bilan_net_actions < 0:
+            st.markdown(f"- **Case 3VH** (Moins-values nettes) : Indiquer **{format_smart(abs(bilan_net_actions), '€')}**")
