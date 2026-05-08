@@ -1200,13 +1200,18 @@ elif page_choisie == "🏛️ Fiscalité":
                     acq_totale = df_actif_a["Acq Num"].sum()
                     pv_totale = df_actif_a["PV Num"].sum()
                     
+                    valeur_unitaire_cession = cession_totale / qte_totale if qte_totale > 0 else 0.0
+                    valeur_unitaire_acq = acq_totale / qte_totale if qte_totale > 0 else 0.0
+                    
                     st.markdown(f"#### 📄 Formulaire 2074 (Cadre 3) - Déclaration Globale pour {actif}")
                     st.markdown(f"- **511 - Désignation :** `{actif} (Global Annuel) - Swissquote Bank SA`")
                     st.markdown(f"- **512 - Date de la cession :** `31/12/{annee_fiscale}`")
+                    st.markdown(f"- **514 - Valeur unitaire de cession :** `{format_smart(valeur_unitaire_cession, '€', is_price=True)}`")
                     st.markdown(f"- **515 - Nombre de titres cédés :** `{format_smart(qte_totale, is_price=True)}`")
-                    st.markdown(f"- **516 ou 514 - Prix de cession global :** `{format_smart(cession_totale, '€')}`")
+                    st.markdown(f"- **516 - Prix de cession global :** `{format_smart(cession_totale, '€')}`")
                     st.markdown(f"- **517 - Frais de cession :** `0 €` *(Déjà déduits dans le logiciel)*")
-                    st.markdown(f"- **521 ou 519 - Prix d'acquisition global :** `{format_smart(acq_totale, '€')}`")
+                    st.markdown(f"- **520 - Prix d'acquisition unitaire :** `{format_smart(valeur_unitaire_acq, '€', is_price=True)}`")
+                    st.markdown(f"- **521 - Prix d'acquisition global :** `{format_smart(acq_totale, '€')}`")
                     st.markdown(f"- **522 - Frais d'acquisition :** `0 €` *(Déjà inclus dans le PRU)*")
                     st.markdown(f"- **526 - Moins-values imputées :** `0 €`")
                     st.info(f"**Bilan pour {actif} :** {format_smart(pv_totale, '€', force_sign=True)}")
