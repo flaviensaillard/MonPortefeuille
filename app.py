@@ -193,7 +193,6 @@ def get_pru_and_qty(ticker, df_transactions):
     for _, r in df_tick.iterrows():
         typ, qte, net_local = str(r['Type']).lower(), extraire_nombre(r['Quantité']), extraire_nombre(r['Montant Net'])
         devise = str(r.get('Devise', 'USD')).strip().upper()
-        # Strict=False car on lit l'historique : si Yahoo plante sur une date passée on ne bloque pas l'app.
         net_usd = net_local * get_historical_usd_rate(devise, r['Date'], strict=False)
         if "achat" in typ:
             total_cost_usd += net_usd; total_qty += qte
@@ -398,7 +397,7 @@ def recuperer_inflation_france():
     try:
         req = urllib.request.Request(
             "https://www.insee.fr/fr/statistiques/serie/telecharger/001759970?ordre=chronologique&format=csv", 
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36', 'Accept': 'text/html,*/*'}
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Accept': 'text/html,*/*'}
         )
         with urllib.request.urlopen(req, timeout=8) as resp:
             lines = resp.read().decode('utf-8', errors='ignore').split('\n')
@@ -554,12 +553,17 @@ def get_crypto_tax_data(df_transactions, target_year):
 if "variations" not in st.session_state: st.session_state.variations = {}
 if "config" not in st.session_state:
     df_c = load_sheet("Config", ["Clé", "Valeur"])
-    st.session_state.config = {str(r["Clé"]): str(r["Valeur"]) if str(r["Clé"])=="f_statut" or str(r["Clé"])=="urssaf_bareme" else extraire_nombre(r["Valeur"]) for _, r in df_c.iterrows() if pd.notna(r["Clé"])}
+    def parse_config_val(k, v):
+        k_str, v_str = str(k).strip(), str(v).strip()
+        if k_str in ["f_statut", "urssaf_bareme"]: return v_str
+        if k_str in ["f_u1", "f_u2"]: return v_str.lower() in ['true', '1', '1.0', 'oui', 'yes']
+        return extraire_nombre(v)
+    st.session_state.config = {str(r["Clé"]).strip(): parse_config_val(r["Clé"], r["Valeur"]) for _, r in df_c.iterrows() if pd.notna(r["Clé"])}
 
 d_conf = {
     "retraite_apport_mensuel": 250.0, "retraite_taxe": 30.0, "f_statut": "Marié(e) / Pacsé(e)", 
-    "f_enf": 0.0, "f_s1": 30000.0, "f_s2": 0.0, "f_u1": 0.0, "f_k1": 0.0, "f_cv1": 5.0, 
-    "f_r1": 0.0, "f_u2": 0.0, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0,
+    "f_enf": 0.0, "f_s1": 30000.0, "f_s2": 0.0, "f_u1": False, "f_k1": 0.0, "f_cv1": 5.0, 
+    "f_r1": 0.0, "f_u2": False, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0,
     "tax_lim_1": 11294.0, "tax_lim_2": 28797.0, "tax_lim_3": 82341.0, "tax_lim_4": 177106.0,
     "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45,
     "decote_lim_cel": 2002.0, "decote_base_cel": 906.0, "decote_lim_mar": 3300.0, "decote_base_mar": 1493.0,
@@ -931,9 +935,16 @@ elif page_choisie == "📈 Performance":
     else:
         try: or_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
         except: or_px = 2000.0
-        df_viz = df_p.copy(); df_viz['Date_DT'] = pd.to_datetime(df_viz['Date'], dayfirst=True, errors='coerce')
-        df_viz = df_viz.dropna(subset=['Date_DT']).sort_values('Date_DT'); df_viz['Année'] = df_viz['Date_DT'].dt.year
-        df_y = df_viz.groupby('Année').last().reset_index(); df_y['Année'] = df_y['Année'].astype(int)
+        
+        df_viz = df_p.copy()
+        df_viz = df_viz.dropna(subset=['Date']).sort_values('Date')
+        df_viz['Date_DT'] = pd.to_datetime(df_viz['Date'], dayfirst=True, errors='coerce')
+        df_viz = df_viz.dropna(subset=['Date_DT']).sort_values('Date_DT')
+        df_viz['Année'] = df_viz['Date_DT'].dt.year
+
+        df_y = df_viz.groupby('Année').last().reset_index()
+        df_y['Année'] = df_y['Année'].astype(int)
+        
         df_y['TWR_mult'] = 1 + (df_y['Score TWR %'] / 100); df_y['TWR_mult_prev'] = df_y['TWR_mult'].shift(1).fillna(1.0)
         df_y['Performance brute (%)'] = ((df_y['TWR_mult'] / df_y['TWR_mult_prev']) - 1) * 100
         jours_annee_1 = (df_viz[df_viz['Année'] == df_viz['Date_DT'].min().year]['Date_DT'].max() - df_viz['Date_DT'].min()).days
@@ -983,8 +994,13 @@ elif page_choisie == "🌴 Retraite":
     annee_en_cours, moy_brute_hist = datetime.datetime.now().year, 5.00
     
     if not st.session_state.projections.empty:
-        df_viz = st.session_state.projections.copy(); df_viz['Date_DT'] = pd.to_datetime(df_viz['Date'], dayfirst=True, errors='coerce')
-        df_years = df_viz.dropna(subset=['Date_DT']).sort_values('Date_DT').groupby(df_viz['Date_DT'].dt.year).last().reset_index()
+        df_viz = st.session_state.projections.copy()
+        df_viz = df_viz.dropna(subset=['Date']).sort_values('Date')
+        df_viz['Date_DT'] = pd.to_datetime(df_viz['Date'], dayfirst=True, errors='coerce')
+        df_viz = df_viz.dropna(subset=['Date_DT']).sort_values('Date_DT')
+        df_viz['Année'] = df_viz['Date_DT'].dt.year
+        df_years = df_viz.groupby('Année').last().reset_index()
+        
         df_years['TWR_mult'] = 1 + (df_years['Score TWR %'] / 100); df_years['TWR_mult_prev'] = df_years['TWR_mult'].shift(1).fillna(1.0)
         df_years['Performance brute (%)'] = ((df_years['TWR_mult'] / df_years['TWR_mult_prev']) - 1) * 100
         jours_annee_1 = (df_viz[df_viz['Année'] == df_viz['Date_DT'].min().year]['Date_DT'].max() - df_viz['Date_DT'].min()).days
@@ -1063,9 +1079,19 @@ elif page_choisie == "🏛️ Fiscalité":
     st.divider(); st.subheader("👤 1. Ma Situation Familiale & Professionnelle")
     
     def update_fiscal_config():
-        keys_to_save = ["in_statut", "in_enf", "in_s1", "in_s2", "in_u1", "in_k1", "in_cv1", "in_r1", "in_u2", "in_k2", "in_cv2", "in_r2", "in_tax_lim_1", "in_tax_lim_2", "in_tax_lim_3", "in_tax_lim_4", "in_tax_rate_2", "in_tax_rate_3", "in_tax_rate_4", "in_tax_rate_5", "in_decote_lim_cel", "in_decote_base_cel", "in_decote_lim_mar", "in_decote_base_mar", "in_tax_pfu", "in_tax_ps", "in_frais_repas"]
-        for key in keys_to_save:
-            if key in st.session_state: st.session_state.config[key.replace("in_", "f_") if key.startswith("in_statut") or key.startswith("in_enf") or key.startswith("in_s") or key.startswith("in_u") or key.startswith("in_k") or key.startswith("in_cv") or key.startswith("in_r") else key.replace("in_", "")] = st.session_state[key]
+        key_mapping = {
+            "in_statut": "f_statut", "in_enf": "f_enf", "in_s1": "f_s1", "in_s2": "f_s2",
+            "in_u1": "f_u1", "in_k1": "f_k1", "in_cv1": "f_cv1", "in_r1": "f_r1",
+            "in_u2": "f_u2", "in_k2": "f_k2", "in_cv2": "f_cv2", "in_r2": "f_r2",
+            "in_tax_lim_1": "tax_lim_1", "in_tax_lim_2": "tax_lim_2", "in_tax_lim_3": "tax_lim_3", "in_tax_lim_4": "tax_lim_4",
+            "in_tax_rate_2": "tax_rate_2", "in_tax_rate_3": "tax_rate_3", "in_tax_rate_4": "tax_rate_4", "in_tax_rate_5": "tax_rate_5",
+            "in_decote_lim_cel": "decote_lim_cel", "in_decote_base_cel": "decote_base_cel",
+            "in_decote_lim_mar": "decote_lim_mar", "in_decote_base_mar": "decote_base_mar",
+            "in_tax_pfu": "tax_pfu", "in_tax_ps": "tax_ps", "in_frais_repas": "frais_repas"
+        }
+        for in_key, out_key in key_mapping.items():
+            if in_key in st.session_state:
+                st.session_state.config[out_key] = st.session_state[in_key]
         try: save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
         except: pass
 
@@ -1081,7 +1107,7 @@ elif page_choisie == "🏛️ Fiscalité":
     st.markdown("---"); st.markdown("#### 🚗 Frais Professionnels (Frais Réels)"); st.write("Le logiciel calculera automatiquement si la déduction de vos frais réels est plus avantageuse que l'abattement standard de 10 %.")
     col_f1, col_f2 = st.columns(2)
     with col_f1:
-        use_frais_1 = st.checkbox("Déclarer aux frais réels (Vous)", value=bool(int(st.session_state.config.get("f_u1", 0))), key="in_u1", on_change=update_fiscal_config)
+        use_frais_1 = st.checkbox("Déclarer aux frais réels (Vous)", value=bool(st.session_state.config.get("f_u1", False)), key="in_u1", on_change=update_fiscal_config)
         frais_reels_1 = 0.0
         if use_frais_1:
             km_1 = st.number_input("Kilomètres annuels (Trajet pro) - Vous ✍️", min_value=0, value=int(st.session_state.config.get("f_k1", 0)), step=1000, key="in_k1", on_change=update_fiscal_config)
@@ -1093,7 +1119,7 @@ elif page_choisie == "🏛️ Fiscalité":
     frais_reels_2 = 0.0
     if "Marié" in statut:
         with col_f2:
-            use_frais_2 = st.checkbox("Déclarer aux frais réels (Conjoint)", value=bool(int(st.session_state.config.get("f_u2", 0))), key="in_u2", on_change=update_fiscal_config)
+            use_frais_2 = st.checkbox("Déclarer aux frais réels (Conjoint)", value=bool(st.session_state.config.get("f_u2", False)), key="in_u2", on_change=update_fiscal_config)
             if use_frais_2:
                 km_2 = st.number_input("Kilomètres annuels (Trajet pro) - Conjoint ✍️", min_value=0, value=int(st.session_state.config.get("f_k2", 0)), step=1000, key="in_k2", on_change=update_fiscal_config)
                 cv_2 = st.selectbox("Puissance du véhicule (CV) - Conjoint ✍️", [3, 4, 5, 6, 7], index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv2", 5))), key="in_cv2", on_change=update_fiscal_config)
@@ -1215,7 +1241,6 @@ elif page_choisie == "🏛️ Fiscalité":
         if bilan_net_crypto > 0: st.markdown(f"- **Case 3AN** (Plus-value) : **{format_smart(bilan_net_crypto, '€')}**")
         elif bilan_net_crypto < 0: st.markdown(f"- **Case 3BN** (Moins-value) : **{format_smart(abs(bilan_net_crypto), '€')}**")
         else: st.markdown("- Aucune plus ou moins-value crypto cette année.")
-        
         st.markdown("### 🔹 Déclaration Principale (Formulaire 2042)")
         if bilan_net_actions > 0:
             st.markdown(f"- **Case 3VG** (Plus-values nettes) : Indiquer **{format_smart(bilan_net_actions, '€')}**")
