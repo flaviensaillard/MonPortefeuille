@@ -226,7 +226,6 @@ def recalculer_toute_la_base_projections(df):
     df_t["Total Global Prev"] = df_t["Total Global"].shift(1).fillna(df_t["Total Global"])
     df_t["D_Cap"] = df_t["Capital investi"] - df_t["Capital investi Prev"]
     
-    # Evolution Strat
     df_t["Evolution actifs $"] = (df_t["Actifs Stratégiques"] - df_t["Actifs Stratégiques Prev"]) - df_t["D_Cap"]
     df_t.loc[0, "Evolution actifs $"] = 0.0
     df_t["Evolution actifs %"] = (df_t["Evolution actifs $"] / df_t["Actifs Stratégiques Prev"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
@@ -234,18 +233,15 @@ def recalculer_toute_la_base_projections(df):
     df_t["Evolution cumulée $"] = df_t["Actifs Stratégiques"] - df_t["Capital investi"]
     df_t["Evolution cumulée %"] = (df_t["Evolution cumulée $"] / df_t["Capital investi"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     
-    # TWR Strat
     base_twr = df_t["Actifs Stratégiques Prev"] + df_t["D_Cap"]
     df_t["TWR_Fact"] = 1 + (df_t["Evolution actifs $"] / base_twr).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     df_t.loc[0, "TWR_Fact"] = 1 + (df_t.loc[0, "Evolution cumulée $"] / df_t.loc[0, "Capital investi"] if df_t.loc[0, "Capital investi"] != 0 else 0.0)
     df_t["Score TWR %"] = (df_t["TWR_Fact"].cumprod() - 1) * 100
     
-    # Evolution Total Global
     df_t["Evo_TG"] = (df_t["Total Global"] - df_t["Total Global Prev"]) - df_t["D_Cap"]
     df_t["TG_Evolution cumulée $"] = df_t["Total Global"] - df_t["Capital investi"]
     df_t["TG_Evolution cumulée %"] = (df_t["TG_Evolution cumulée $"] / df_t["Capital investi"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     
-    # TWR Total Global
     base_tg_twr = df_t["Total Global Prev"] + df_t["D_Cap"]
     df_t["TG_TWR_Fact"] = 1 + (df_t["Evo_TG"] / base_tg_twr).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     df_t.loc[0, "TG_TWR_Fact"] = 1 + (df_t.loc[0, "TG_Evolution cumulée $"] / df_t.loc[0, "Capital investi"] if df_t.loc[0, "Capital investi"] != 0 else 0.0)
@@ -522,7 +518,7 @@ def get_action_tax_data(df_transactions, target_year):
             balances[t]['qty'] -= qte; balances[t]['cost_eur'] -= cout_cession_eur
             if balances[t]['qty'] <= 0.00001: balances[t]['qty'], balances[t]['cost_eur'] = 0.0, 0.0
             if row['Date_DT'].year == target_year:
-                results.append({"Actif": t, "Date de vente": row['Date'], "Quantité vendue": format_smart(qte, is_price=True), "PRU d'Acquisition (€)": format_smart(pru_eur, "€", is_price=True), "Prix de revente net (€)": format_smart(net_eur, "€", is_price=True), "Plus-value (€)": format_smart(pv_eur, "€"), "Cat": "Action/ETF", "PV Num": pv_eur})
+                results.append({"Actif": t, "Date de vente": row['Date'], "Quantité vendue": format_smart(qte, is_price=True), "PRU d'Acquisition (€)": format_smart(pru_eur, "€", is_price=True), "Prix de revente net (€)": format_smart(net_eur, "€", is_price=True), "Plus-value (€)": format_smart(pv_eur, "€"), "Cat": "Action/ETF", "PV Num": pv_eur, "Qte Num": qte, "Acq Num": cout_cession_eur, "Cession Num": net_eur})
     return results
 
 def get_crypto_tax_data(df_transactions, target_year):
@@ -568,7 +564,6 @@ if "config" not in st.session_state:
         return extraire_nombre(v)
     st.session_state.config = {str(r["Clé"]).strip(): parse_config_val(r["Clé"], r["Valeur"]) for _, r in df_c.iterrows() if pd.notna(r["Clé"])}
 
-# Valeurs de fallback de la configuration générale
 d_conf = {
     "retraite_apport_mensuel": 250.0, "retraite_taxe": 30.0, "f_statut": "Marié(e) / Pacsé(e)", 
     "f_enf": 0.0, "f_s1": 30000.0, "f_s2": 0.0, "f_u1": False, "f_k1": 0.0, "f_cv1": 5.0, 
@@ -1080,7 +1075,7 @@ elif page_choisie == "🌴 Retraite":
 
 elif page_choisie == "🏛️ Fiscalité":
     st.title("🏛️ Simulateur Fiscal (Lecture Drive)")
-    st.write("Cet outil simule votre déclaration d'impôts française selon les règles exactes du Code des Impôts.")
+    st.write("Cet outil simule votre déclaration d'impôts française selon les règles exactes du Code des Impôts et agit comme une antisèche pour remplir vos formulaires.")
 
     df_t = st.session_state.transactions.copy(); df_t['Date_DT'] = pd.to_datetime(df_t.get('Date'), dayfirst=True, errors='coerce')
     annees_dispos = sorted(df_t['Date_DT'].dropna().dt.year.unique().tolist(), reverse=True) if not df_t.empty else [datetime.datetime.now().year]
@@ -1175,13 +1170,13 @@ elif page_choisie == "🏛️ Fiscalité":
     df_actions = pd.DataFrame(get_action_tax_data(df_t, annee_fiscale))
     df_cryptos = pd.DataFrame(get_crypto_tax_data(df_t, annee_fiscale))
 
-    st.subheader(f"📝 2. Détail des Ventes Boursières (Année {annee_fiscale})")
+    st.subheader(f"📝 2. L'Antisèche du Fisc (Cessions {annee_fiscale})")
     
     if df_actions.empty and df_cryptos.empty:
         st.info(f"Aucune cession d'actifs détectée dans la feuille 'Transaction' pour l'année {annee_fiscale}.")
         plus_values_actions = moins_values_actions = plus_values_crypto = moins_values_crypto = 0.0
     else:
-        st.write("Ce tableau lit les transactions déjà enregistrées et figées dans Google Sheets.")
+        st.write("Ce tableau génère les montants exacts à copier-coller dans vos formulaires fiscaux français (2074 pour les ETF/Actions et 2086 pour les Cryptos).")
         plus_values_actions = df_actions[df_actions["PV Num"] > 0]["PV Num"].sum() if not df_actions.empty else 0.0
         moins_values_actions = abs(df_actions[df_actions["PV Num"] < 0]["PV Num"].sum()) if not df_actions.empty else 0.0
         plus_values_crypto = df_cryptos[df_cryptos["PV Num"] > 0]["PV Num"].sum() if not df_cryptos.empty else 0.0
@@ -1197,10 +1192,41 @@ elif page_choisie == "🏛️ Fiscalité":
             with tabs[i]:
                 df_actif_a = df_actions[df_actions["Actif"] == actif] if not df_actions.empty else pd.DataFrame()
                 df_actif_c = df_cryptos[df_cryptos["Actif"] == actif] if not df_cryptos.empty else pd.DataFrame()
-                df_actif = pd.concat([df_actif_a, df_actif_c])
-                st.dataframe(df_actif.drop(columns=["Actif", "Cat", "PV Num"]), column_config={c: st.column_config.TextColumn(c) for c in df_actif.drop(columns=["Actif", "Cat", "PV Num"]).columns}, use_container_width=True, hide_index=True)
-                res_actif = df_actif["PV Num"].sum()
-                st.markdown(f"*Bilan de l'année pour **{actif}** : <strong style='color:{'green' if res_actif >= 0 else 'red'}'>{format_smart(res_actif, '€', force_sign=True)}</strong>*", unsafe_allow_html=True)
+                
+                # Formatage type Antisèche Fiscale
+                if not df_actif_a.empty:
+                    qte_totale = df_actif_a["Qte Num"].sum()
+                    cession_totale = df_actif_a["Cession Num"].sum()
+                    acq_totale = df_actif_a["Acq Num"].sum()
+                    pv_totale = df_actif_a["PV Num"].sum()
+                    
+                    st.markdown(f"#### 📄 Formulaire 2074 (Cadre 3) - Déclaration Globale pour {actif}")
+                    st.markdown(f"- **511 - Désignation :** `{actif} (Global Annuel) - Swissquote Bank SA`")
+                    st.markdown(f"- **512 - Date de la cession :** `31/12/{annee_fiscale}`")
+                    st.markdown(f"- **515 - Nombre de titres cédés :** `{format_smart(qte_totale, is_price=True)}`")
+                    st.markdown(f"- **516 ou 514 - Prix de cession global :** `{format_smart(cession_totale, '€')}`")
+                    st.markdown(f"- **517 - Frais de cession :** `0 €` *(Déjà déduits dans le logiciel)*")
+                    st.markdown(f"- **521 ou 519 - Prix d'acquisition global :** `{format_smart(acq_totale, '€')}`")
+                    st.markdown(f"- **522 - Frais d'acquisition :** `0 €` *(Déjà inclus dans le PRU)*")
+                    st.markdown(f"- **526 - Moins-values imputées :** `0 €`")
+                    st.info(f"**Bilan pour {actif} :** {format_smart(pv_totale, '€', force_sign=True)}")
+                    
+                    with st.expander("Voir le détail des transactions boursières"):
+                        st.dataframe(df_actif_a.drop(columns=["Actif", "Cat", "PV Num", "Qte Num", "Acq Num", "Cession Num"]), use_container_width=True, hide_index=True)
+                
+                if not df_actif_c.empty:
+                    pv_totale_c = df_actif_c["PV Num"].sum()
+                    st.markdown(f"#### 🪙 Formulaire 2086 (Cryptomonnaies) - Lignes à déclarer pour {actif}")
+                    st.write("Pour les cryptomonnaies, l'administration exige le détail de chaque transaction. Saisissez ces lignes successives dans le formulaire 2086 :")
+                    
+                    for idx, row_c in df_actif_c.iterrows():
+                        st.markdown(f"**Vente du {row_c['Date de vente']} ({row_c['Quantité vendue']} {actif})**")
+                        st.markdown(f"- **Prix de cession (214) :** `{row_c['Prix Cession (€)']}`")
+                        st.markdown(f"- **Valeur globale du portefeuille (215) :** `{row_c['Valeur Globale Portefeuille (€)']}`")
+                        st.markdown(f"- **Fraction de capital déduite :** `{row_c['Fraction Capital déduite (€)']}`")
+                        st.markdown(f"- **Plus ou Moins-value :** `{row_c['Plus-value (€)']}`")
+                        st.write("---")
+                    st.info(f"**Bilan crypto pour {actif} :** {format_smart(pv_totale_c, '€', force_sign=True)}")
 
     bilan_net_actions = plus_values_actions - moins_values_actions
     bilan_net_crypto = plus_values_crypto - moins_values_crypto
@@ -1245,18 +1271,11 @@ elif page_choisie == "🏛️ Fiscalité":
     
     if bilan_net_actions > 0: st.markdown(f"> ⚠️ **Attention :** L'impôt supplémentaire sur vos plus-values boursières (**{format_smart(cout_bareme if choix == 'Barème' else cout_pfu, '€')}**) n'est pas prélevé tous les mois. Il sera à régler en une fois lors de la régularisation de septembre.")
 
-    st.divider(); st.subheader("📝 4. Résumé pour votre déclaration d'impôts"); st.caption("⚠️ *Avertissement : Ce simulateur est une aide indicative.*")
+    st.divider(); st.subheader("📝 4. Résumé pour la Déclaration Principale (2042)"); st.caption("⚠️ *Avertissement : Ce simulateur est une aide indicative.*")
     c_decl1, c_decl2 = st.columns(2)
     with c_decl1:
         st.markdown("### 🔹 Formulaire 3916 (Comptes étrangers)\n- **Case 8UU (sur la 2042) :** À cocher.\n- **Informations à fournir sur le 3916 :**\n  - *Intitulé :* Swissquote Bank SA\n  - *Adresse :* Chemin de la Crétaux 33, 1196 Gland, Suisse")
-        st.markdown("### 🔹 Formulaire 2074 (Actions / ETF)")
-        if plus_values_actions > 0: st.markdown(f"- **Ligne 905 :** {format_smart(plus_values_actions, '€')}")
-        if moins_values_actions > 0: st.markdown(f"- **Ligne 913 :** {format_smart(moins_values_actions, '€')}")
     with c_decl2:
-        st.markdown("### 🔹 Formulaire 2086 (Cryptomonnaies)")
-        if bilan_net_crypto > 0: st.markdown(f"- **Case 3AN** (Plus-value) : **{format_smart(bilan_net_crypto, '€')}**")
-        elif bilan_net_crypto < 0: st.markdown(f"- **Case 3BN** (Moins-value) : **{format_smart(abs(bilan_net_crypto), '€')}**")
-        else: st.markdown("- Aucune plus ou moins-value crypto cette année.")
         st.markdown("### 🔹 Déclaration Principale (Formulaire 2042)")
         if bilan_net_actions > 0:
             st.markdown(f"- **Case 3VG** (Plus-values nettes) : Indiquer **{format_smart(bilan_net_actions, '€')}**")
@@ -1266,3 +1285,5 @@ elif page_choisie == "🏛️ Fiscalité":
                 st.markdown("- **Case 2OP** : **À laisser DÉCOCHÉE**.")
         elif bilan_net_actions < 0:
             st.markdown(f"- **Case 3VH** (Moins-values nettes) : Indiquer **{format_smart(abs(bilan_net_actions), '€')}**")
+        else:
+            st.markdown("- Aucune plus-value ou moins-value boursière à reporter.")
