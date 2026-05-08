@@ -522,34 +522,57 @@ def get_action_tax_data(df_transactions, target_year):
     return results
 
 def get_crypto_tax_data(df_transactions, target_year):
+    # V8 - Module 2086 Extrêmement Détaillé
     df_c = df_transactions.copy()
     df_c['Date_DT'] = pd.to_datetime(df_c['Date'], dayfirst=True, errors='coerce')
     df_c = df_c.dropna(subset=['Date_DT']).sort_values('Date_DT')
     total_acq_cost, crypto_balances, results = 0.0, {}, []
+    
     for idx, row in df_c.iterrows():
         t = str(row['Ticker']).upper()
         if not is_crypto_ticker(t): continue
         typ, qte, net_local = str(row['Type']).lower(), extraire_nombre(row['Quantité']), extraire_nombre(row['Montant Net'])
         net_eur = net_local * get_historical_fx(str(row.get('Devise', 'USD')).strip().upper(), row['Date'], strict=False)
+        
         if "achat" in typ:
-            total_acq_cost += net_eur; crypto_balances[t] = crypto_balances.get(t, 0.0) + qte
+            total_acq_cost += net_eur
+            crypto_balances[t] = crypto_balances.get(t, 0.0) + qte
         elif "vente" in typ:
-            prix_cession_eur = net_eur; valeur_globale = 0.0
+            prix_cession_eur = net_eur 
+            valeur_globale = 0.0
+            
             for c_tick, c_qty in crypto_balances.items():
                 if c_qty > 0.00001:
-                    if c_tick == t: valeur_globale += c_qty * (prix_cession_eur / qte if qte > 0 else 0.0)
+                    if c_tick == t: 
+                        valeur_globale += c_qty * (prix_cession_eur / qte if qte > 0 else 0.0)
                     else:
                         try:
                             h_px_usd = float(yf.Ticker(f"{c_tick}-USD").history(start=(row['Date_DT'] - pd.Timedelta(days=3)).strftime('%Y-%m-%d'), end=(row['Date_DT'] + pd.Timedelta(days=2)).strftime('%Y-%m-%d'))['Close'].iloc[-1])
                             valeur_globale += (c_qty * h_px_usd * get_historical_fx("USD", row['Date'], strict=False))
                         except: pass
+                        
             if valeur_globale < prix_cession_eur: valeur_globale = prix_cession_eur
-            fraction_capital = total_acq_cost * (prix_cession_eur / valeur_globale) if valeur_globale > 0 else 0.0
+            
+            prix_acq_global = total_acq_cost
+            fraction_capital = prix_acq_global * (prix_cession_eur / valeur_globale) if valeur_globale > 0 else 0.0
             pv_eur = prix_cession_eur - fraction_capital
+            
             total_acq_cost = max(0.0, total_acq_cost - fraction_capital)
             crypto_balances[t] = max(0.0, crypto_balances.get(t, 0.0) - qte)
+            
             if row['Date_DT'].year == target_year:
-                results.append({"Actif": t, "Date de vente": row['Date'], "Quantité vendue": format_smart(qte, is_price=True), "Prix Cession (€)": format_smart(prix_cession_eur, "€"), "Valeur Globale Portefeuille (€)": format_smart(valeur_globale, "€"), "Fraction Capital déduite (€)": format_smart(fraction_capital, "€"), "Plus-value (€)": format_smart(pv_eur, "€"), "Cat": "Crypto", "PV Num": pv_eur})
+                results.append({
+                    "Actif": t, 
+                    "Date de vente": row['Date'], 
+                    "Quantité vendue": format_smart(qte, is_price=True),
+                    "Ligne 211": row['Date'],
+                    "Ligne 212": valeur_globale,
+                    "Ligne 213": prix_cession_eur,
+                    "Ligne 220": prix_acq_global,
+                    "Ligne 224": pv_eur,
+                    "Cat": "Crypto", 
+                    "PV Num": pv_eur
+                })
     return results
 
 # --- 5. INITIALISATION ---
@@ -1179,7 +1202,6 @@ elif page_choisie == "🏛️ Fiscalité":
     else:
         st.write("Ce tableau génère les montants exacts à copier-coller dans vos formulaires fiscaux français (2074 pour les ETF/Actions et 2086 pour les Cryptos).")
         
-        # V7 Fix: Calculate global plus/moins values based on aggregated ASSET performance, not single transactions.
         if not df_actions.empty:
             df_a_net_per_asset = df_actions.groupby("Actif")["PV Num"].sum().reset_index()
             plus_values_actions = df_a_net_per_asset[df_a_net_per_asset["PV Num"] > 0]["PV Num"].sum()
@@ -1231,14 +1253,22 @@ elif page_choisie == "🏛️ Fiscalité":
                 if not df_actif_c.empty:
                     pv_totale_c = df_actif_c["PV Num"].sum()
                     st.markdown(f"#### 🪙 Formulaire 2086 (Cryptomonnaies) - Lignes à déclarer pour {actif}")
-                    st.write("Pour les cryptomonnaies, l'administration exige le détail de chaque transaction. Saisissez ces lignes successives dans le formulaire 2086 :")
+                    st.write("Pour les cryptomonnaies, l'administration exige le détail transaction par transaction. Reportez exactement ces lignes dans l'Annexe 2086 :")
                     
                     for idx, row_c in df_actif_c.iterrows():
                         st.markdown(f"**Vente du {row_c['Date de vente']} ({row_c['Quantité vendue']} {actif})**")
-                        st.markdown(f"- **Prix de cession (214) :** `{row_c['Prix Cession (€)']}`")
-                        st.markdown(f"- **Valeur globale du portefeuille (215) :** `{row_c['Valeur Globale Portefeuille (€)']}`")
-                        st.markdown(f"- **Fraction de capital déduite :** `{row_c['Fraction Capital déduite (€)']}`")
-                        st.markdown(f"- **Plus ou Moins-value :** `{row_c['Plus-value (€)']}`")
+                        st.markdown(f"- **211 Date de la cession :** `{row_c['Ligne 211']}`")
+                        st.markdown(f"- **212 Valeur globale du portefeuille :** `{format_smart(row_c['Ligne 212'], '€')}`")
+                        st.markdown(f"- **213 Prix de cession :** `{format_smart(row_c['Ligne 213'], '€')}`")
+                        st.markdown(f"- **214 Frais de cession :** `0 €` *(Inclus dans le net)*")
+                        st.markdown(f"- **215 Prix de cession net des frais :** `{format_smart(row_c['Ligne 213'], '€')}`")
+                        st.markdown(f"- **216 Soulte reçue ou versée :** `0 €`")
+                        st.markdown(f"- **217 Prix de cession net des soultes :** `{format_smart(row_c['Ligne 213'], '€')}`")
+                        st.markdown(f"- **218 Prix de cession net des frais et soultes :** `{format_smart(row_c['Ligne 213'], '€')}`")
+                        st.markdown(f"- **220 Prix total d'acquisition :** `{format_smart(row_c['Ligne 220'], '€')}`")
+                        st.markdown(f"- **222 Soultes reçues en cas d'échanges antérieurs :** `0 €`")
+                        st.markdown(f"- **223 Prix total d'acquisition net :** `{format_smart(row_c['Ligne 220'], '€')}`")
+                        st.markdown(f"- **224 Plus-value ou moins-value globale :** `{format_smart(row_c['Ligne 224'], '€', force_sign=True)}`")
                         st.write("---")
                     st.info(f"**Bilan crypto pour {actif} :** {format_smart(pv_totale_c, '€', force_sign=True)}")
 
