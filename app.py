@@ -595,7 +595,7 @@ if "config" not in st.session_state:
 d_conf = {
     "retraite_apport_mensuel": 250.0, "retraite_taxe": 30.0, "f_statut": "Marié(e) / Pacsé(e)", 
     "f_enf": 0.0, "f_s1": 30000.0, "f_s2": 0.0, "f_u1": False, "f_k1": 0.0, "f_cv1": 5.0, 
-    "f_r1": 0.0, "f_u2": False, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0, "f_int_net": 0.0, "f_taux_etr": 0.0, "f_pays_etr": "Lituanie",
+    "f_r1": 0.0, "f_u2": False, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0, "f_int_net": 0.0, "f_taux_etr": 11.10, "f_pays_etr": "Lituanie",
     "tax_lim_1": FISCAL_DB[2025]["tax_lim_1"], "tax_lim_2": FISCAL_DB[2025]["tax_lim_2"], "tax_lim_3": FISCAL_DB[2025]["tax_lim_3"], "tax_lim_4": FISCAL_DB[2025]["tax_lim_4"],
     "tax_rate_2": FISCAL_DB[2025]["tax_rate_2"], "tax_rate_3": FISCAL_DB[2025]["tax_rate_3"], "tax_rate_4": FISCAL_DB[2025]["tax_rate_4"], "tax_rate_5": FISCAL_DB[2025]["tax_rate_5"],
     "decote_lim_cel": FISCAL_DB[2025]["decote_lim_cel"], "decote_base_cel": FISCAL_DB[2025]["decote_base_cel"], "decote_lim_mar": FISCAL_DB[2025]["decote_lim_mar"], "decote_base_mar": FISCAL_DB[2025]["decote_base_mar"],
@@ -1106,7 +1106,14 @@ elif page_choisie == "🏛️ Fiscalité":
     st.write("Cet outil simule votre déclaration d'impôts française selon les règles exactes du Code des Impôts et agit comme une antisèche pour remplir vos formulaires.")
 
     df_t = st.session_state.transactions.copy(); df_t['Date_DT'] = pd.to_datetime(df_t.get('Date'), dayfirst=True, errors='coerce')
-    annees_dispos = sorted(df_t['Date_DT'].dropna().dt.year.unique().tolist(), reverse=True) if not df_t.empty else [datetime.datetime.now().year]
+    
+    # V13 - Gestion intelligente de l'année par défaut
+    annee_en_cours_sys = datetime.datetime.now().year
+    annee_defaut_sys = annee_en_cours_sys - 1
+    annees_dispos = sorted(df_t['Date_DT'].dropna().dt.year.unique().tolist(), reverse=True) if not df_t.empty else []
+    if annee_defaut_sys not in annees_dispos: annees_dispos.append(annee_defaut_sys)
+    annees_dispos = sorted(list(set(annees_dispos)), reverse=True)
+    idx_defaut = annees_dispos.index(annee_defaut_sys)
     
     def on_year_change():
         y = st.session_state.annee_fiscale_select
@@ -1115,7 +1122,7 @@ elif page_choisie == "🏛️ Fiscalité":
             st.session_state.config[k] = v
             st.session_state[f"in_{k}"] = v
             
-    annee_fiscale = st.selectbox("📅 Sélectionner l'année des revenus (à déclarer l'année suivante) :", annees_dispos, key="annee_fiscale_select", on_change=on_year_change)
+    annee_fiscale = st.selectbox("📅 Sélectionner l'année des revenus (à déclarer l'année suivante) :", annees_dispos, index=idx_defaut, key="annee_fiscale_select", on_change=on_year_change)
     st.divider()
 
     # --- INITIALISATION ET CALCUL DES PLUS-VALUES GLOBALES ---
@@ -1164,7 +1171,6 @@ elif page_choisie == "🏛️ Fiscalité":
     st.subheader(f"📝 2. L'Antisèche du Fisc (Revenus {annee_fiscale})")
     st.write("Naviguez dans les dossiers ci-dessous pour afficher les lignes exactes à remplir sur le site des impôts, adaptées à votre situation.")
 
-    # Container pour l'output 2042 à charger plus tard
     out_2042_container = st.empty()
 
     # --- DOSSIER 1 : FORMULAIRE 2042 ---
@@ -1225,22 +1231,21 @@ elif page_choisie == "🏛️ Fiscalité":
                     frais_reels_2 = calcul_frais_km(km_2, cv_2) + (repas_2 * float(st.session_state.config.get("frais_repas", 5.35)))
                     st.info(f"💰 Frais Réels estimés (Conjoint) : **{format_smart(frais_reels_2, '€')}**")
         
-        out_2042_lines = st.container() # Réservé pour afficher les lignes 2042 à la fin
+        out_2042_lines = st.container()
 
     # --- DOSSIER 2 : FORMULAIRE 2047 ---
     with st.expander("📁 Formulaire 2047 (Revenus mobiliers étrangers - ex: Revolut)"):
-        st.markdown("### 🔹 Revenus de capitaux étrangers")
+        st.markdown("### 🔹 Rubrique 2 : Des revenus des valeurs et capitaux mobiliers imposables en France")
         c_rev1, c_rev2, c_rev3 = st.columns(3)
         with c_rev1:
             pays_etranger = st.text_input("Pays d'origine (ex: Lituanie) ✍️", value=st.session_state.config.get("f_pays_etr", "Lituanie"), key="in_pays_etr", on_change=update_fiscal_config)
         with c_rev2:
             interets_net = st.number_input("Montant Net encaissé (en €) ✍️", min_value=0.0, value=float(st.session_state.config.get("f_int_net", 0.0)), step=10.0, key="in_int_net", on_change=update_fiscal_config)
         with c_rev3:
-            taux_etranger = st.number_input("Taux applicable (%) ✍️", min_value=0.0, max_value=100.0, value=float(st.session_state.config.get("f_taux_etr", 0.0)), step=1.0, key="in_taux_etr", on_change=update_fiscal_config)
+            taux_etranger = st.number_input("Taux applicable (%) ✍️", min_value=0.0, max_value=100.0, value=float(st.session_state.config.get("f_taux_etr", 11.10)), step=0.1, key="in_taux_etr", on_change=update_fiscal_config)
         
-        taux_dec = taux_etranger / 100.0
-        interets_bruts = interets_net / (1 - taux_dec) if taux_dec < 1 else interets_net
-        impot_etranger = interets_bruts - interets_net
+        # V13 - Correction du Bug IFU Revolut : Lignes 236,237,238 = 0 et 250,252 = Net
+        res_235 = round(interets_net * (taux_etranger / 100.0))
         
         if interets_net <= 0:
             st.info("Aucun revenu déclaré. Formulaire non requis.")
@@ -1249,24 +1254,16 @@ elif page_choisie == "🏛️ Fiscalité":
             st.markdown(f"- **Ligne 232 (Pays) :** `{pays_etranger}`")
             st.markdown(f"- **Ligne 233 (Montant Net encaissé) :** `{format_smart(interets_net, '€')}`")
             st.markdown(f"- **Ligne 234 (Taux applicable) :** `{format_smart(taux_etranger, '%')}`")
-            st.markdown(f"- **Ligne 235 (Résultat) :** `{format_smart(interets_bruts, '€')}`")
-            st.markdown(f"- **Ligne 236 (Impot supporté à l'étranger) :** `{format_smart(impot_etranger, '€')}`")
-            st.markdown(f"- **Ligne 237 (Crédit d'impot retenu) :** `{format_smart(impot_etranger, '€')}`")
-            if taux_etranger > 0:
-                st.markdown(f"- **Ligne 238 (Intérets crédit d'impot inclus) :** `{format_smart(interets_bruts, '€')}`")
-                st.markdown(f"- **Ligne 250 (Intéret n'ouvrant pas droit à un crédit d'impot) :** `0.00 €`")
-            else:
-                st.markdown(f"- **Ligne 238 (Intérets crédit d'impot inclus) :** `0.00 €`")
-                st.markdown(f"- **Ligne 250 (Intéret n'ouvrant pas droit à un crédit d'impot) :** `{format_smart(interets_bruts, '€')}`")
-            st.markdown(f"- **Ligne 252 (Total des intérets imposables - 2TR) :** `{format_smart(interets_bruts, '€')}`")
+            st.markdown(f"- **Ligne 235 (Résultat) :** `{format_smart(res_235, '€')}`")
+            st.markdown("- **Ligne 236 (Impôt supporté à l'étranger) :** `0.00 €`")
+            st.markdown("- **Ligne 237 (Crédit d'impôt retenu) :** `0.00 €`")
+            st.markdown("- **Ligne 238 (Intérêts crédit d'impôt inclus) :** `0.00 €`")
+            st.markdown(f"- **Ligne 250 (Intérêt n'ouvrant pas droit à un crédit d'impôt) :** `{format_smart(interets_net, '€')}`")
+            st.markdown(f"- **Ligne 252 (Total des intérêts imposables - 2TR) :** `{format_smart(interets_net, '€')}`")
+            st.caption("*Note : L'algorithme a ajusté la mathématique illogique des IFU Revolut pour qu'elle soit légalement recevable sur le site des impôts français.*")
 
     # --- CALCULS GLOBAUX POUR LA RECOMMANDATION ET 2042 ---
-    parts = 1.0 if "Célibataire" in statut else 2.0
-    if enfants == 1: parts += 0.5
-    elif enfants == 2: parts += 1.0
-    elif enfants >= 3: parts += 1.0 + (enfants - 2)
-
-    revenu_base_net_global = (salaire_1 - max(salaire_1 * 0.10, frais_reels_1)) + (salaire_2 - max(salaire_2 * 0.10, frais_reels_2)) + interets_bruts
+    revenu_base_net_global = (salaire_1 - max(salaire_1 * 0.10, frais_reels_1)) + (salaire_2 - max(salaire_2 * 0.10, frais_reels_2)) + interets_net
     impot_salaires_seuls = calcul_impot_ir(revenu_base_net_global, parts, statut, apply_decote=True)
     
     if (df_actions.empty and df_cryptos.empty) or (plus_values_actions == 0 and moins_values_actions == 0): 
@@ -1278,7 +1275,7 @@ elif page_choisie == "🏛️ Fiscalité":
         cout_bareme = (calcul_impot_ir(revenu_base_net_global + bilan_net_actions, parts, statut, apply_decote=True) - impot_salaires_seuls) + (bilan_net_actions * (float(st.session_state.config.get("tax_ps", 17.2)) / 100.0))
         choix = "Barème" if cout_bareme < cout_pfu else "PFU"
 
-    # --- AFFICHAGE LIGNES 2042 (Dans l'expander du haut) ---
+    # --- AFFICHAGE LIGNES 2042 ---
     with out_2042_lines:
         st.divider()
         st.markdown("### 🔹 Lignes à reporter sur la Déclaration 2042")
@@ -1303,8 +1300,8 @@ elif page_choisie == "🏛️ Fiscalité":
             st.markdown("- `Aucune plus-value ou moins-value crypto à reporter.`")
             
         st.markdown("**Revenus Mobiliers (Rubrique 2) :**")
-        if interets_bruts > 0:
-            st.markdown(f"- **Case 2TR** (Intérêts étrangers) : `{format_smart(interets_bruts, '€')}` *(Issu de la 2047)*")
+        if interets_net > 0:
+            st.markdown(f"- **Case 2TR** (Intérêts étrangers) : `{format_smart(interets_net, '€')}` *(Issu de la 2047)*")
         else:
             st.markdown("- `Aucun intérêt ou dividende à reporter.`")
 
@@ -1389,7 +1386,7 @@ elif page_choisie == "🏛️ Fiscalité":
                     st.markdown(f"2. Dans le **Cadre 11**, remplissez la **Colonne A** (et **C/E** avec la même valeur).")
                     st.markdown(f"3. Remplissez **les colonnes F ou G** selon la durée de détention de vos titres.")
             else:
-                st.write("Pas de consignes spécifiques pour le Cadre 11/12 cette année (Bilan à 0 €).")
+                st.write("Pas de consignes spécifiques pour le Cadre 11/12 cette année (Bilan exact à 0 €).")
 
     # --- DOSSIER 4 : FORMULAIRE 2086 ---
     with st.expander("📁 Formulaire 2086 (Cryptomonnaies)"):
@@ -1439,7 +1436,7 @@ elif page_choisie == "🏛️ Fiscalité":
             st.success("✅ **La Flat Tax (PFU) est plus avantageuse pour vos plus-values !**")
             st.write(f"Sur vos {format_smart(bilan_net_actions, '€')} de plus-values nettes :\n- Avec le Barème, la hausse de vos revenus vous ferait basculer dans les tranches hautes, l'impôt serait de **{format_smart(cout_bareme, '€')}**.\n- Avec la Flat Tax : l'impôt est plafonné à **{format_smart(cout_pfu, '€')}**.")
 
-    taux_commun = (impot_salaires_seuls / (salaire_1 + salaire_2 + interets_bruts) * 100) if (salaire_1 + salaire_2 + interets_bruts) > 0 else 0.0
+    taux_commun = (impot_salaires_seuls / (salaire_1 + salaire_2 + interets_net) * 100) if (salaire_1 + salaire_2 + interets_net) > 0 else 0.0
     taux_perso_1 = (calcul_impot_ir((salaire_1 - max(salaire_1 * 0.10, frais_reels_1)), 1.0, "Célibataire", apply_decote=False) / salaire_1 * 100) if salaire_1 > 0 else 0.0
 
     st.markdown("#### 📌 Bilan de vos impôts sur les Revenus")
