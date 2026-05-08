@@ -200,7 +200,6 @@ def get_pru_and_qty(ticker, df_transactions):
     for _, r in df_tick.iterrows():
         typ, qte, net_local = str(r['Type']).lower(), extraire_nombre(r['Quantité']), extraire_nombre(r['Montant Net'])
         devise = str(r.get('Devise', 'USD')).strip().upper()
-        # Strict=False car on lit l'historique : si Yahoo plante sur une date passée on ne bloque pas l'app.
         net_usd = net_local * get_historical_usd_rate(devise, r['Date'], strict=False)
         if "achat" in typ:
             total_cost_usd += net_usd; total_qty += qte
@@ -227,7 +226,6 @@ def recalculer_toute_la_base_projections(df):
     df_t["Total Global Prev"] = df_t["Total Global"].shift(1).fillna(df_t["Total Global"])
     df_t["D_Cap"] = df_t["Capital investi"] - df_t["Capital investi Prev"]
     
-    # Evolution Strat
     df_t["Evolution actifs $"] = (df_t["Actifs Stratégiques"] - df_t["Actifs Stratégiques Prev"]) - df_t["D_Cap"]
     df_t.loc[0, "Evolution actifs $"] = 0.0
     df_t["Evolution actifs %"] = (df_t["Evolution actifs $"] / df_t["Actifs Stratégiques Prev"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
@@ -235,18 +233,15 @@ def recalculer_toute_la_base_projections(df):
     df_t["Evolution cumulée $"] = df_t["Actifs Stratégiques"] - df_t["Capital investi"]
     df_t["Evolution cumulée %"] = (df_t["Evolution cumulée $"] / df_t["Capital investi"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     
-    # TWR Strat
     base_twr = df_t["Actifs Stratégiques Prev"] + df_t["D_Cap"]
     df_t["TWR_Fact"] = 1 + (df_t["Evolution actifs $"] / base_twr).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     df_t.loc[0, "TWR_Fact"] = 1 + (df_t.loc[0, "Evolution cumulée $"] / df_t.loc[0, "Capital investi"] if df_t.loc[0, "Capital investi"] != 0 else 0.0)
     df_t["Score TWR %"] = (df_t["TWR_Fact"].cumprod() - 1) * 100
     
-    # Evolution Total Global
     df_t["Evo_TG"] = (df_t["Total Global"] - df_t["Total Global Prev"]) - df_t["D_Cap"]
     df_t["TG_Evolution cumulée $"] = df_t["Total Global"] - df_t["Capital investi"]
     df_t["TG_Evolution cumulée %"] = (df_t["TG_Evolution cumulée $"] / df_t["Capital investi"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     
-    # TWR Total Global
     base_tg_twr = df_t["Total Global Prev"] + df_t["D_Cap"]
     df_t["TG_TWR_Fact"] = 1 + (df_t["Evo_TG"] / base_tg_twr).replace([np.inf, -np.inf], 0.0).fillna(0.0)
     df_t.loc[0, "TG_TWR_Fact"] = 1 + (df_t.loc[0, "TG_Evolution cumulée $"] / df_t.loc[0, "Capital investi"] if df_t.loc[0, "Capital investi"] != 0 else 0.0)
@@ -405,7 +400,7 @@ def recuperer_inflation_france():
     try:
         req = urllib.request.Request(
             "https://www.insee.fr/fr/statistiques/serie/telecharger/001759970?ordre=chronologique&format=csv", 
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Accept': 'text/html,*/*'}
+            headers={'User-Agent': 'Mozilla/5.0', 'Accept': '*/*'}
         )
         with urllib.request.urlopen(req, timeout=8) as resp:
             lines = resp.read().decode('utf-8', errors='ignore').split('\n')
@@ -1296,30 +1291,57 @@ elif page_choisie == "🏛️ Fiscalité":
         st.markdown("### 🔹 Déclaration Principale (Formulaire 2042)")
         if bilan_net_actions > 0:
             st.markdown(f"- **Case 3VG** (Plus-values nettes) : Indiquer **{format_smart(bilan_net_actions, '€')}**")
-            if choix == "Barème":
-                st.markdown("- **Case 2OP** : **À cocher absolument**.")
-            else:
-                st.markdown("- **Case 2OP** : **À laisser DÉCOCHÉE**.")
+            if choix == "Barème": st.markdown("- **Case 2OP** : **À cocher absolument**.")
+            else: st.markdown("- **Case 2OP** : **À laisser DÉCOCHÉE**.")
         elif bilan_net_actions < 0:
             st.markdown(f"- **Case 3VH** (Moins-values nettes) : Indiquer **{format_smart(abs(bilan_net_actions), '€')}**")
-            
+
     st.divider()
-    st.subheader("🧭 Le GPS Fiscal : Cadres 11 et 12")
+    st.subheader("🧭 Le GPS Fiscal : Cadres 11 et 12 (Imputation des pertes)")
+    
     if bilan_net_actions < 0:
-        st.info(f"**Diagnostic :** Vous êtes en perte nette sur l'année ({format_smart(bilan_net_actions, '€')}).")
-        st.markdown(f"1. Ne remplissez pas le **Cadre 11** de la 2074.")
-        st.markdown(f"2. Allez directement au **Cadre 12** (« Situation au 31/12/{annee_fiscale} »).")
+        st.info(f"**Diagnostic :** Vous êtes en perte nette globale sur l'année ({format_smart(bilan_net_actions, '€')}).")
+        st.markdown(f"1. Laissez le **Cadre 11** de la 2074 totalement **VIDE**.")
+        st.markdown(f"2. Allez au **Cadre 12** (« Situation au 31/12/{annee_fiscale} »).")
         st.markdown(f"3. Dans la case de l'année **{annee_fiscale}**, reportez : **{format_smart(abs(bilan_net_actions), '€')}**.")
-        st.write("*Cette moins-value effacera vos futures plus-values lors des 10 prochaines années.*")
-    elif bilan_net_actions > 0:
-        st.success(f"**Diagnostic :** Vous êtes en gain net sur l'année ({format_smart(bilan_net_actions, '€')}).")
+        st.write("*Cette moins-value sera utilisable pendant 10 ans pour effacer vos futurs impôts boursiers.*")
+    elif bilan_net_actions > 0 and moins_values_actions > 0:
+        st.success(f"**Diagnostic :** Vous êtes en gain net sur l'année, mais vous avez subi des pertes ({format_smart(moins_values_actions, '€')}) qu'il faut imputer sur vos gains.")
+        st.markdown("⚠️ **Laissez le Bloc 1132 (Compléments de prix) TOTALEMENT VIDE.**")
+        st.markdown("👉 **Rendez-vous au Bloc 1133 :** *« Valeurs mobilières, droits sociaux, titres assimilés sans abattement et éligibles à l'abattement de droit commun »*.")
+        
+        mv_restante = moins_values_actions
+        lignes_cadre_11 = []
+        df_a_groups = df_actions.groupby("Actif")["PV Num"].sum().reset_index()
+        
+        for idx, row in df_a_groups[df_a_groups["PV Num"] > 0].iterrows():
+            pv_actif = row["PV Num"]
+            imput = min(pv_actif, mv_restante)
+            mv_restante -= imput
+            col_c = pv_actif - imput
+            lignes_cadre_11.append({
+                "Titre (Bloc 1133)": row["Actif"],
+                "Col A (Gain)": format_smart(pv_actif, "€"),
+                "Col B (Perte imputée)": format_smart(imput, "€"),
+                "Col C (A - B)": format_smart(col_c, "€"),
+                "Col D (Pertes antérieures)": "0 € *",
+                "Col E (C - D)": format_smart(col_c, "€"),
+                "Col F/G (Abattement)": "0 €" if choix == "PFU" else "À calculer"
+            })
+            
+        st.dataframe(pd.DataFrame(lignes_cadre_11), hide_index=True, use_container_width=True)
+        st.caption("* *Si vous aviez des pertes déclarées les années précédentes (entre 2015 et 2024), vous pouvez les déduire dans la Colonne D pour réduire encore la Colonne E.*")
+        if choix == "Barème":
+            st.caption("* *Vous avez choisi le Barème : Remplissez la Colonne F ou G selon la durée de détention de vos titres (Aidez-vous de la notice 2074-NOT-ABT).*")
+    elif bilan_net_actions > 0 and moins_values_actions == 0:
+        st.success(f"**Diagnostic :** Vous êtes en gain net sur l'année et vous n'avez fait AUCUNE perte boursière.")
         if choix == "PFU":
             st.markdown(f"1. Vous avez choisi la **Flat Tax (PFU)** : L'abattement pour durée de détention ne s'applique pas.")
-            st.markdown(f"2. Dans le **Cadre 11**, remplissez uniquement les colonnes de l'**Étape 1**.")
+            st.markdown(f"2. Dans le **Cadre 11**, remplissez uniquement la **Colonne A** (et **C/E** avec la même valeur). Laissez B et D à zéro.")
             st.markdown(f"3. Ne remplissez ni la colonne F, ni la colonne G.")
         else:
             st.markdown(f"1. Vous avez opté pour le **Barème Progressif (Case 2OP)** : L'abattement pour durée de détention s'applique.")
-            st.markdown(f"2. Dans le **Cadre 11**, vous devez remplir les colonnes de l'**Étape 1** ET **les colonnes F ou G**.")
-            st.markdown(f"3. *Rappel : L'abattement dépend du type de titres (acquis avant ou après le 1er janvier 2018) et de votre temps de détention réel. Aidez-vous de la fiche 2074-NOT-ABT.*")
+            st.markdown(f"2. Dans le **Cadre 11**, remplissez la **Colonne A** (et **C/E** avec la même valeur).")
+            st.markdown(f"3. Remplissez **les colonnes F ou G** selon la durée de détention de vos titres (Aidez-vous de la fiche 2074-NOT-ABT).")
     else:
-        st.write("Pas de consignes spécifiques pour le Cadre 11/12 cette année (Bilan à 0).")
+        st.write("Pas de consignes spécifiques pour le Cadre 11/12 cette année (Bilan exact à 0 €).")
