@@ -10,11 +10,11 @@ import urllib.request
 import json
 from streamlit_autorefresh import st_autorefresh
 
-# --- IMPORTATION DE TES MODULES (L'Architecture V16) ---
+# --- IMPORTATION DE L'ARCHITECTURE MODULAIRE (V16) ---
 from utils import format_smart, extraire_nombre, nettoyer_dataframe, is_crypto_ticker
 from db_manager import load_sheet, save_sheet, append_to_sheet
 from api_client import recuperer_inflation_france, get_historical_fx, get_historical_usd_rate
-from tax_engine import calcul_frais_km, calcul_impot_ir, get_action_tax_data, get_crypto_tax_data
+from tax_engine import calcul_frais_km, calcul_impot_ir, get_action_tax_data, get_crypto_tax_data, get_pru_and_qty
 
 # --- 1. CONFIGURATION ET CONSTANTES ---
 st.set_page_config(page_title="Mon Portefeuille", layout="wide")
@@ -36,7 +36,6 @@ FISCAL_DB = {
     2025: {"tax_lim_1": 11750.0, "tax_lim_2": 29957.0, "tax_lim_3": 85664.0, "tax_lim_4": 184261.0, "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45, "decote_lim_cel": 2083.0, "decote_base_cel": 943.0, "decote_lim_mar": 3432.0, "decote_base_mar": 1553.0, "tax_pfu": 30.0, "tax_ps": 17.2, "frais_repas": 5.50}
 }
 
-# Taux global avec Fallback réseau (Fini les zéros cachés)
 try: TAUX_EUR_USD = float(yf.Ticker("EURUSD=X").history(period="1d")['Close'].iloc[-1])
 except: TAUX_EUR_USD = 1.05 
 
@@ -64,26 +63,6 @@ def afficher_montant_double(label, montant_usd, delta_str="", couleur_valeur=Non
     t_val, t_lbl = ("1.8rem", "0.9rem") if taille == "large" else ("1.4rem", "0.85rem") if taille == "medium" else ("1.2rem", "0.85rem")
     c_val = f"color: {couleur_valeur};" if couleur_valeur else ""
     st.markdown(f"""<div style="margin-bottom: 0.8rem;"><div style="font-size: {t_lbl}; opacity: 0.8; margin-bottom: 0.2rem;">{label}</div><div style="font-size: {t_val}; font-weight: 600; line-height: 1.2; {c_val}">{s_usd} $ <span style="font-size: 0.65em; opacity: 0.7; font-weight: 400;">/ {s_eur} €</span></div>{delta_html}</div>""", unsafe_allow_html=True)
-
-def get_pru_and_qty(ticker, df_transactions):
-    df_tick = df_transactions[df_transactions['Ticker'] == ticker].copy()
-    if df_tick.empty: return 0.0, 0.0
-    if 'Date_DT' not in df_tick.columns: df_tick['Date_DT'] = pd.to_datetime(df_tick['Date'], dayfirst=True, errors='coerce')
-    df_tick = df_tick.dropna(subset=['Date_DT']).sort_values('Date_DT')
-    
-    total_cost_usd, total_qty = 0.0, 0.0
-    for _, r in df_tick.iterrows():
-        typ, qte, net_local = str(r['Type']).lower(), extraire_nombre(r['Quantité']), extraire_nombre(r['Montant Net'])
-        devise = str(r.get('Devise', 'USD')).strip().upper()
-        net_usd = net_local * get_historical_usd_rate(devise, r['Date'], strict=False)
-        if "achat" in typ:
-            total_cost_usd += net_usd; total_qty += qte
-        elif "vente" in typ:
-            pru_instant = total_cost_usd / total_qty if total_qty > 0 else 0.0
-            total_cost_usd -= pru_instant * qte; total_qty -= qte
-            if total_qty <= 0.000001: total_cost_usd, total_qty = 0.0, 0.0
-                
-    return round(total_cost_usd / total_qty if total_qty > 0 else 0.0, 6), round(total_qty, 6)
 
 def recalculer_toute_la_base_projections(df):
     if df is None or df.empty: return df
@@ -136,11 +115,9 @@ def recalculer_totaux_locaux():
 
 def calculer_metriques_jour(df_actuel, variations):
     if df_actuel.empty: return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-    
     df = df_actuel.copy()
     df["Val_Num"] = df["Valeur totale"].apply(extraire_nombre)
     df["Pct_Num"] = df["Pourcentage (%)"].apply(extraire_nombre)
-    
     val_total = df["Val_Num"].sum()
     val_invest = df.loc[df["Pct_Num"] > 0, "Val_Num"].sum()
     somme_p = df["Pct_Num"].sum()
@@ -420,8 +397,7 @@ if page_choisie == "📊 Tableau de bord":
         afficher_montant_double("Actifs Stratégiques", val_invest, f"{format_smart(delta, '$', force_sign=True)} ({format_smart(p_delta, '%', force_sign=True)} sur 1 an glissant)")
         st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if v_jour_strat_usd >= 0 else '📉'} Aujourd'hui : <strong style='color:{'#2ecc71' if v_jour_strat_usd >= 0 else '#e74c3c'}'>{format_smart(v_jour_strat_usd, '$', force_sign=True)} ({format_smart(pct_jour_strat, '%', force_sign=True)})</strong></span></div>", unsafe_allow_html=True)
     
-    if df_p.empty: st.info("Aucune donnée.")
-    else:
+    if not df_p.empty:
         df_v_s = df_p_live.copy(); df_v_s['Date_DT'] = pd.to_datetime(df_v_s['Date'], dayfirst=True, errors='coerce')
         df_v_s = df_v_s.dropna(subset=['Date_DT']).sort_values('Date_DT').reset_index(drop=True)
         st.markdown("**📈 Évolution & Performance de la stratégie**")
@@ -466,7 +442,7 @@ if page_choisie == "📊 Tableau de bord":
             f2.update_traces(textposition='inside', textinfo='percent+label'); f2.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
             st.plotly_chart(f2, use_container_width=True)
 
-    st.divider(); st.subheader("🏖️ 4. Liberté Financière (Rente Mensuelle)")
+    st.divider(); st.subheader("🏖️ 4. Liberté Financière (Rente Mensuelle actuelle)")
     cr1, cr2 = st.columns(2)
     with cr1: inf = st.slider("Inflation cible à déduire (%) ✍️", 0.0, 15.0, 2.0, 0.1, key="dash_infl")
     with cr2:
@@ -537,7 +513,6 @@ elif page_choisie == "⚖️ Rééquilibrage":
                         t_cl = t_t.upper().strip(); m_n = round((t_q * t_c) + t_f if t_ty == "Achat" else (t_q * t_c) - t_f, 6)
                         fx = get_historical_fx(t_dev, t_d.strftime("%Y-%m-%d"), strict=True)
                         c_pru_usd, c_qty = get_pru_and_qty(t_cl, st.session_state.transactions)
-                        
                         if t_ty == "Achat":
                             net_usd = m_n * get_historical_usd_rate(t_dev, t_d.strftime("%Y-%m-%d"), strict=True)
                             new_qty = c_qty + t_q
@@ -545,7 +520,6 @@ elif page_choisie == "⚖️ Rééquilibrage":
                         else: r_pru_usd = c_pru_usd
                         
                         nr = {"Ticker": t_cl, "Type": t_ty, "Date": t_d.strftime("%d/%m/%Y"), "Quantité": t_q, "Cours": t_c, "Frais": t_f, "Montant Net": m_n, "Devise": t_dev, "PRU (Devise)": r_pru_usd, "Taux change (EUR)": fx}
-                        
                         append_to_sheet("Transaction", nr)
                         st.session_state.transactions = pd.concat([st.session_state.transactions, pd.DataFrame([nr])], ignore_index=True)
                         
@@ -583,7 +557,7 @@ elif page_choisie == "⚖️ Rééquilibrage":
 
 elif page_choisie == "💰 Fonds":
     st.title("💰 Fonds")
-    st.write("Déclarez ici vos apports de capital (virements depuis votre compte bancaire). L'argent sera automatiquement ajouté à vos liquidités Cash.")
+    st.write("Déclarez ici vos apports de capital.")
     with st.expander("➕ Nouveau mouvement"):
         with st.form("f_m"):
             d_m = st.date_input("Date ✍️"); t_m = st.radio("Type ✍️", ["Ajout de fond propre", "Retrait"], horizontal=True)
@@ -625,7 +599,7 @@ elif page_choisie == "🏖️ Suivi":
 elif page_choisie == "📈 Performance":
     st.title("📈 Performances Annuelles & Inflation")
     df_p = st.session_state.projections
-    if df_p.empty: st.info("Aucune donnée.")
+    if df_p.empty: st.info("Aucune donnée disponible. Le premier point sera enregistré cette nuit.")
     else:
         try: or_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
         except: or_px = 2000.0
@@ -754,6 +728,7 @@ elif page_choisie == "🌴 Retraite":
         st.divider(); st.subheader("📈 Évolution du Pouvoir d'Achat Réel (Capital Net)")
         st.plotly_chart(px.line(pd.DataFrame(trajectory_data).melt(id_vars="Année", var_name="Scénario", value_name="Valeur Nette ($)"), x="Année", y="Valeur Nette ($)", color="Scénario", color_discrete_map={"Capital Net (Scénario A)": "#2ecc71", "Capital Net (Scénario B)": "#3498db"}).update_traces(line_shape='spline').update_layout(yaxis_title="Capital Net d'Inflation ($)", xaxis_title="Année", legend_title=""), use_container_width=True)
 
+
 elif page_choisie == "🏛️ Fiscalité":
     st.title("🏛️ Simulateur Fiscal (Lecture Drive)")
 
@@ -844,7 +819,6 @@ elif page_choisie == "🏛️ Fiscalité":
         cout_bareme = (calcul_impot_ir(revenu_base_net_global + bilan_net_actions, parts, statut, apply_decote=True) - impot_salaires_seuls) + (bilan_net_actions * (float(st.session_state.config.get("tax_ps", 17.2)) / 100.0))
         choix = "Barème" if cout_bareme < cout_pfu else "PFU"
 
-
     st.subheader(f"📝 2. L'Antisèche du Fisc (Revenus {annee_fiscale})")
 
     out_2042_container = st.empty()
@@ -912,9 +886,11 @@ elif page_choisie == "🏛️ Fiscalité":
         if interets_net <= 0:
             st.info("Aucun revenu déclaré. Formulaire non requis.")
         else:
+            st.write("⚠️ **Le piège de l'IFU Revolut :** Revolut génère des IFU avec des incohérences mathématiques. Sur le site des impôts, si vous remplissez le premier tableau (lignes 232 à 238) ET la ligne 250, le site va compter vos revenus deux fois et bloquer votre déclaration !")
+            st.write("👉 **La solution officielle :** Puisque ces revenus n'ouvrent droit à aucun crédit d'impôt en France, ignorez totalement le premier tableau et remplissez **uniquement** la section du bas :")
             st.markdown(f"- **Lignes 232 à 238 :** `Laissez totalement VIDE`")
             st.markdown(f"- **Ligne 250 (Intérêts n'ouvrant pas droit à crédit d'impôt) :** Pays : `{pays_etranger}` | Montant : `{format_smart(interets_net, '€')}`")
-            st.markdown(f"- **Ligne 251 (Total) :** `{format_smart(interets_net, '€')}`")
+            st.markdown(f"- **Ligne 251 (Total) :** `{format_smart(interets_net, '€')}` *(Généralement auto-calculé)*")
             st.markdown(f"- **Ligne 252 (Total 2TR) :** `{format_smart(interets_net, '€')}`")
 
     # --- AFFICHAGE LIGNES 2042 ---
@@ -987,8 +963,8 @@ elif page_choisie == "🏛️ Fiscalité":
                 st.markdown(f"3. Dans la case de l'année **{annee_fiscale}**, reportez : `{format_smart(abs(bilan_net_actions), '€')}`.")
             elif bilan_net_actions > 0 and moins_values_actions > 0:
                 st.success(f"**Diagnostic :** Vous êtes en gain net sur l'année, mais vous avez subi des pertes ({format_smart(moins_values_actions, '€')}) qu'il faut imputer sur vos gains.")
-                st.markdown("⚠️ **Laissez le Bloc 1132 (Compléments de prix) TOTALEMENT VIDE.**")
-                st.markdown("👉 **Rendez-vous au Bloc 1133 :** *« Valeurs mobilières, droits sociaux, titres assimilés sans abattement et éligibles à l'abattement de droit commun »*.")
+                st.markdown("⚠️ **Laissez le Bloc 1132 TOTALEMENT VIDE.**")
+                st.markdown("👉 **Rendez-vous au Bloc 1133.**")
                 
                 mv_restante = moins_values_actions
                 lignes_cadre_11 = []
@@ -1029,6 +1005,7 @@ elif page_choisie == "🏛️ Fiscalité":
                     st.markdown(f"- **222 Soultes reçues en cas d'échanges antérieurs :** `0 €`")
                     st.markdown(f"- **223 Prix total d'acquisition net :** `{format_smart(row_c['Ligne 223'], '€')}`")
                     st.markdown(f"- **224 Plus-value ou moins-value globale :** `{format_smart(row_c['Ligne 224'], '€', force_sign=True)}`")
+                    st.write("---")
 
     # --- SECTION FINALE : RECOMMANDATION GLOBALE ---
     st.divider()
