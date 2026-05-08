@@ -595,7 +595,7 @@ if "config" not in st.session_state:
 d_conf = {
     "retraite_apport_mensuel": 250.0, "retraite_taxe": 30.0, "f_statut": "Marié(e) / Pacsé(e)", 
     "f_enf": 0.0, "f_s1": 30000.0, "f_s2": 0.0, "f_u1": False, "f_k1": 0.0, "f_cv1": 5.0, 
-    "f_r1": 0.0, "f_u2": False, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0, "f_int_net": 0.0, "f_taux_etr": 11.10, "f_pays_etr": "Lituanie",
+    "f_r1": 0.0, "f_u2": False, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0, "f_int_net": 0.0, "f_pays_etr": "Lituanie",
     "tax_lim_1": FISCAL_DB[2025]["tax_lim_1"], "tax_lim_2": FISCAL_DB[2025]["tax_lim_2"], "tax_lim_3": FISCAL_DB[2025]["tax_lim_3"], "tax_lim_4": FISCAL_DB[2025]["tax_lim_4"],
     "tax_rate_2": FISCAL_DB[2025]["tax_rate_2"], "tax_rate_3": FISCAL_DB[2025]["tax_rate_3"], "tax_rate_4": FISCAL_DB[2025]["tax_rate_4"], "tax_rate_5": FISCAL_DB[2025]["tax_rate_5"],
     "decote_lim_cel": FISCAL_DB[2025]["decote_lim_cel"], "decote_base_cel": FISCAL_DB[2025]["decote_base_cel"], "decote_lim_mar": FISCAL_DB[2025]["decote_lim_mar"], "decote_base_mar": FISCAL_DB[2025]["decote_base_mar"],
@@ -1107,7 +1107,6 @@ elif page_choisie == "🏛️ Fiscalité":
 
     df_t = st.session_state.transactions.copy(); df_t['Date_DT'] = pd.to_datetime(df_t.get('Date'), dayfirst=True, errors='coerce')
     
-    # V13 - Gestion intelligente de l'année par défaut
     annee_en_cours_sys = datetime.datetime.now().year
     annee_defaut_sys = annee_en_cours_sys - 1
     annees_dispos = sorted(df_t['Date_DT'].dropna().dt.year.unique().tolist(), reverse=True) if not df_t.empty else []
@@ -1125,7 +1124,6 @@ elif page_choisie == "🏛️ Fiscalité":
     annee_fiscale = st.selectbox("📅 Sélectionner l'année des revenus (à déclarer l'année suivante) :", annees_dispos, index=idx_defaut, key="annee_fiscale_select", on_change=on_year_change)
     st.divider()
 
-    # --- INITIALISATION ET CALCUL DES PLUS-VALUES GLOBALES ---
     df_actions = pd.DataFrame(get_action_tax_data(df_t, annee_fiscale))
     df_cryptos = pd.DataFrame(get_crypto_tax_data(df_t, annee_fiscale))
 
@@ -1147,7 +1145,7 @@ elif page_choisie == "🏛️ Fiscalité":
             "in_statut": "f_statut", "in_enf": "f_enf", "in_s1": "f_s1", "in_s2": "f_s2",
             "in_u1": "f_u1", "in_k1": "f_k1", "in_cv1": "f_cv1", "in_r1": "f_r1",
             "in_u2": "f_u2", "in_k2": "f_k2", "in_cv2": "f_cv2", "in_r2": "f_r2",
-            "in_int_net": "f_int_net", "in_taux_etr": "f_taux_etr", "in_pays_etr": "f_pays_etr",
+            "in_int_net": "f_int_net", "in_pays_etr": "f_pays_etr",
             "in_tax_lim_1": "tax_lim_1", "in_tax_lim_2": "tax_lim_2", "in_tax_lim_3": "tax_lim_3", "in_tax_lim_4": "tax_lim_4",
             "in_tax_rate_2": "tax_rate_2", "in_tax_rate_3": "tax_rate_3", "in_tax_rate_4": "tax_rate_4", "in_tax_rate_5": "tax_rate_5",
             "in_decote_lim_cel": "decote_lim_cel", "in_decote_base_cel": "decote_base_cel",
@@ -1170,6 +1168,8 @@ elif page_choisie == "🏛️ Fiscalité":
     st.divider()
     st.subheader(f"📝 2. L'Antisèche du Fisc (Revenus {annee_fiscale})")
     st.write("Naviguez dans les dossiers ci-dessous pour afficher les lignes exactes à remplir sur le site des impôts, adaptées à votre situation.")
+
+    out_2042_container = st.empty()
 
     # --- DOSSIER 1 : FORMULAIRE 2042 ---
     exp_2042 = st.expander("📁 Formulaire 2042 (Déclaration Principale)", expanded=True)
@@ -1234,38 +1234,23 @@ elif page_choisie == "🏛️ Fiscalité":
     # --- DOSSIER 2 : FORMULAIRE 2047 ---
     with st.expander("📁 Formulaire 2047 (Revenus mobiliers étrangers - ex: Revolut)"):
         st.markdown("### 🔹 Rubrique 2 : Des revenus des valeurs et capitaux mobiliers imposables en France")
-        c_rev1, c_rev2, c_rev3 = st.columns(3)
+        c_rev1, c_rev2 = st.columns(2)
         with c_rev1:
             pays_etranger = st.text_input("Pays d'origine (ex: Lituanie) ✍️", value=st.session_state.config.get("f_pays_etr", "Lituanie"), key="in_pays_etr", on_change=update_fiscal_config)
         with c_rev2:
             interets_net = st.number_input("Montant Net encaissé (en €) ✍️", min_value=0.0, value=float(st.session_state.config.get("f_int_net", 0.0)), step=10.0, key="in_int_net", on_change=update_fiscal_config)
-        with c_rev3:
-            taux_etranger = st.number_input("Taux applicable (%) ✍️", min_value=0.0, max_value=100.0, value=float(st.session_state.config.get("f_taux_etr", 11.10)), step=0.1, key="in_taux_etr", on_change=update_fiscal_config)
-        
-        # V13 - Correction du Bug IFU Revolut : Lignes 236,237,238 = 0 et 250,252 = Net
-        res_235 = round(interets_net * (taux_etranger / 100.0))
         
         if interets_net <= 0:
             st.info("Aucun revenu déclaré. Formulaire non requis.")
         else:
-            st.write("Le « Fonds monétaire flexible » (Revolut) ou équivalent verse des intérêts. Voici les lignes à reporter :")
-            st.markdown(f"- **Ligne 232 (Pays) :** `{pays_etranger}`")
-            st.markdown(f"- **Ligne 233 (Montant Net encaissé) :** `{format_smart(interets_net, '€')}`")
-            st.markdown(f"- **Ligne 234 (Taux applicable) :** `{format_smart(taux_etranger, '%')}`")
-            st.markdown(f"- **Ligne 235 (Résultat) :** `{format_smart(res_235, '€')}`")
-            st.markdown("- **Ligne 236 (Impôt supporté à l'étranger) :** `0.00 €`")
-            st.markdown("- **Ligne 237 (Crédit d'impôt retenu) :** `0.00 €`")
-            st.markdown("- **Ligne 238 (Intérêts crédit d'impôt inclus) :** `0.00 €`")
-            st.markdown(f"- **Ligne 250 (Intérêt n'ouvrant pas droit à un crédit d'impôt) :** `{format_smart(interets_net, '€')}`")
-            st.markdown(f"- **Ligne 252 (Total des intérêts imposables - 2TR) :** `{format_smart(interets_net, '€')}`")
-            st.caption("*Note : L'algorithme a ajusté la mathématique illogique des IFU Revolut pour qu'elle soit légalement recevable sur le site des impôts français.*")
+            st.write("⚠️ **Le piège de l'IFU Revolut :** Revolut génère des IFU avec des incohérences mathématiques (ex: des taux à 11.10% sans crédit d'impôt). Sur le site des impôts, si vous remplissez le premier tableau (lignes 232 à 238) ET la ligne 250, le site va compter vos revenus deux fois (Ligne 251 = 238 + 250) et bloquer votre déclaration !")
+            st.write("👉 **La solution officielle :** Puisque ces revenus n'ouvrent droit à aucun crédit d'impôt en France, ignorez totalement le premier tableau et remplissez **uniquement** la section du bas :")
+            st.markdown(f"- **Lignes 232 à 238 :** `Laissez totalement VIDE`")
+            st.markdown(f"- **Ligne 250 (Intérêts n'ouvrant pas droit à crédit d'impôt) :** Pays : `{pays_etranger}` | Montant : `{format_smart(interets_net, '€')}`")
+            st.markdown(f"- **Ligne 251 (Total) :** `{format_smart(interets_net, '€')}` *(Généralement auto-calculé)*")
+            st.markdown(f"- **Ligne 252 (Total 2TR) :** `{format_smart(interets_net, '€')}`")
 
     # --- CALCULS GLOBAUX POUR LA RECOMMANDATION ET 2042 ---
-    parts = 1.0 if "Célibataire" in statut else 2.0
-    if enfants == 1: parts += 0.5
-    elif enfants == 2: parts += 1.0
-    elif enfants >= 3: parts += 1.0 + (enfants - 2)
-
     revenu_base_net_global = (salaire_1 - max(salaire_1 * 0.10, frais_reels_1)) + (salaire_2 - max(salaire_2 * 0.10, frais_reels_2)) + interets_net
     impot_salaires_seuls = calcul_impot_ir(revenu_base_net_global, parts, statut, apply_decote=True)
     
