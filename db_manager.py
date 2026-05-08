@@ -3,27 +3,42 @@ import pandas as pd
 import gspread
 from gspread_dataframe import set_with_dataframe, get_as_dataframe
 from google.oauth2.service_account import Credentials
+import time
 
 @st.cache_resource
 def init_google_sheets():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     credentials = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     gc = gspread.authorize(credentials)
-    # Remplacer par ta propre clé Google Sheets si nécessaire
     return gc.open_by_key("1hkZoHQ1vvtbI1DYHR_OnofWn4jG92JGyxJjN-FedsWk")
 
+def execute_with_retry(func, max_attempts=3, initial_delay=2):
+    """Bouclier anti-crash : Réessaie automatiquement si l'API Google bloque."""
+    delay = initial_delay
+    for attempt in range(max_attempts):
+        try:
+            return func()
+        except Exception as e:
+            if attempt == max_attempts - 1:
+                st.error(f"⚠️ Échec définitif de communication avec la base de données après {max_attempts} tentatives.")
+                raise e
+            time.sleep(delay)
+            delay *= 2  # Exponential backoff: attend 2s, puis 4s, puis 8s.
+
 def load_sheet(sheet_name, default_cols):
-    try:
+    def _load():
         sh = init_google_sheets()
         ws = sh.worksheet(sheet_name)
         df = get_as_dataframe(ws, evaluate_formulas=True).dropna(how='all').dropna(axis=1, how='all')
         if df.empty: return pd.DataFrame(columns=default_cols)
         return df
-    except Exception as e:
+    try:
+        return execute_with_retry(_load)
+    except Exception:
         return pd.DataFrame(columns=default_cols)
 
 def save_sheet(sheet_name, df):
-    try:
+    def _save():
         sh = init_google_sheets()
         try: 
             ws = sh.worksheet(sheet_name)
@@ -31,11 +46,10 @@ def save_sheet(sheet_name, df):
             ws = sh.add_worksheet(title=sheet_name, rows=100, cols=20)
         ws.clear()
         set_with_dataframe(ws, df, include_index=False)
-    except Exception as e:
-        st.error(f"⚠️ Échec de l'enregistrement dans '{sheet_name}'. Vérifiez les quotas de l'API Google.")
+    execute_with_retry(_save)
 
 def append_to_sheet(sheet_name, new_row_dict):
-    try:
+    def _append():
         sh = init_google_sheets()
         ws = sh.worksheet(sheet_name)
         headers = ws.row_values(1)
@@ -44,5 +58,4 @@ def append_to_sheet(sheet_name, new_row_dict):
             ws.append_row(headers)
         row_values = [new_row_dict.get(h, "") for h in headers]
         ws.append_row(row_values)
-    except Exception as e:
-        raise ValueError("⚠️ Échec de communication avec la base de données Google Sheets. Opération annulée.")
+    execute_with_retry(_append)
