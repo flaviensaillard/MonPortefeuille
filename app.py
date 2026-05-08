@@ -125,8 +125,15 @@ def calculer_metriques_jour(df_actuel, variations):
     somme_p = df["Pct_Num"].sum()
     
     def parse_var(tick):
-        match = re.search(r'([+-]?\d+\.?\d*)', variations.get(str(tick).upper(), "0"))
-        return float(match.group(1)) if match else 0.0
+        var_str = variations.get(str(tick).upper(), "0")
+        match = re.search(r'(\d+\.?\d*)', var_str)
+        if match:
+            val = float(match.group(1))
+            # C'est ici la correction : on remet le signe négatif si on détecte une flèche rouge ou un moins
+            if '↘' in var_str or '-' in var_str:
+                return -val
+            return val
+        return 0.0
 
     df["Var_Pct"] = df["Ticker"].apply(parse_var)
     df["Val_Veille"] = df["Val_Num"] / (1 + df["Var_Pct"] / 100.0)
