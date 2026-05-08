@@ -595,7 +595,7 @@ if "config" not in st.session_state:
 d_conf = {
     "retraite_apport_mensuel": 250.0, "retraite_taxe": 30.0, "f_statut": "Marié(e) / Pacsé(e)", 
     "f_enf": 0.0, "f_s1": 30000.0, "f_s2": 0.0, "f_u1": False, "f_k1": 0.0, "f_cv1": 5.0, 
-    "f_r1": 0.0, "f_u2": False, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0, "f_int_net": 0.0, "f_pays_etr": "Lituanie",
+    "f_r1": 0.0, "f_u2": False, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0, "f_int_net": 0.0, "f_taux_etr": 11.10, "f_pays_etr": "Lituanie",
     "tax_lim_1": FISCAL_DB[2025]["tax_lim_1"], "tax_lim_2": FISCAL_DB[2025]["tax_lim_2"], "tax_lim_3": FISCAL_DB[2025]["tax_lim_3"], "tax_lim_4": FISCAL_DB[2025]["tax_lim_4"],
     "tax_rate_2": FISCAL_DB[2025]["tax_rate_2"], "tax_rate_3": FISCAL_DB[2025]["tax_rate_3"], "tax_rate_4": FISCAL_DB[2025]["tax_rate_4"], "tax_rate_5": FISCAL_DB[2025]["tax_rate_5"],
     "decote_lim_cel": FISCAL_DB[2025]["decote_lim_cel"], "decote_base_cel": FISCAL_DB[2025]["decote_base_cel"], "decote_lim_mar": FISCAL_DB[2025]["decote_lim_mar"], "decote_base_mar": FISCAL_DB[2025]["decote_base_mar"],
@@ -1251,6 +1251,11 @@ elif page_choisie == "🏛️ Fiscalité":
             st.markdown(f"- **Ligne 252 (Total 2TR) :** `{format_smart(interets_net, '€')}`")
 
     # --- CALCULS GLOBAUX POUR LA RECOMMANDATION ET 2042 ---
+    parts = 1.0 if "Célibataire" in statut else 2.0
+    if enfants == 1: parts += 0.5
+    elif enfants == 2: parts += 1.0
+    elif enfants >= 3: parts += 1.0 + (enfants - 2)
+
     revenu_base_net_global = (salaire_1 - max(salaire_1 * 0.10, frais_reels_1)) + (salaire_2 - max(salaire_2 * 0.10, frais_reels_2)) + interets_net
     impot_salaires_seuls = calcul_impot_ir(revenu_base_net_global, parts, statut, apply_decote=True)
     
