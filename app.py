@@ -522,7 +522,6 @@ def get_action_tax_data(df_transactions, target_year):
     return results
 
 def get_crypto_tax_data(df_transactions, target_year):
-    # V10 - Gestion détaillée des capitaux déduits (Lignes 220, 221, 223)
     df_c = df_transactions.copy()
     df_c['Date_DT'] = pd.to_datetime(df_c['Date'], dayfirst=True, errors='coerce')
     df_c = df_c.dropna(subset=['Date_DT']).sort_values('Date_DT')
@@ -588,7 +587,7 @@ if "config" not in st.session_state:
     df_c = load_sheet("Config", ["Clé", "Valeur"])
     def parse_config_val(k, v):
         k_str, v_str = str(k).strip(), str(v).strip()
-        if k_str in ["f_statut", "urssaf_bareme"]: return v_str
+        if k_str in ["f_statut", "urssaf_bareme", "f_pays_etr"]: return v_str
         if k_str in ["f_u1", "f_u2"]: return v_str.lower() in ['true', '1', '1.0', 'oui', 'yes']
         return extraire_nombre(v)
     st.session_state.config = {str(r["Clé"]).strip(): parse_config_val(r["Clé"], r["Valeur"]) for _, r in df_c.iterrows() if pd.notna(r["Clé"])}
@@ -596,7 +595,7 @@ if "config" not in st.session_state:
 d_conf = {
     "retraite_apport_mensuel": 250.0, "retraite_taxe": 30.0, "f_statut": "Marié(e) / Pacsé(e)", 
     "f_enf": 0.0, "f_s1": 30000.0, "f_s2": 0.0, "f_u1": False, "f_k1": 0.0, "f_cv1": 5.0, 
-    "f_r1": 0.0, "f_u2": False, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0,
+    "f_r1": 0.0, "f_u2": False, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0, "f_int_etr": 0.0, "f_pays_etr": "Lituanie",
     "tax_lim_1": FISCAL_DB[2025]["tax_lim_1"], "tax_lim_2": FISCAL_DB[2025]["tax_lim_2"], "tax_lim_3": FISCAL_DB[2025]["tax_lim_3"], "tax_lim_4": FISCAL_DB[2025]["tax_lim_4"],
     "tax_rate_2": FISCAL_DB[2025]["tax_rate_2"], "tax_rate_3": FISCAL_DB[2025]["tax_rate_3"], "tax_rate_4": FISCAL_DB[2025]["tax_rate_4"], "tax_rate_5": FISCAL_DB[2025]["tax_rate_5"],
     "decote_lim_cel": FISCAL_DB[2025]["decote_lim_cel"], "decote_base_cel": FISCAL_DB[2025]["decote_base_cel"], "decote_lim_mar": FISCAL_DB[2025]["decote_lim_mar"], "decote_base_mar": FISCAL_DB[2025]["decote_base_mar"],
@@ -1124,6 +1123,7 @@ elif page_choisie == "🏛️ Fiscalité":
             "in_statut": "f_statut", "in_enf": "f_enf", "in_s1": "f_s1", "in_s2": "f_s2",
             "in_u1": "f_u1", "in_k1": "f_k1", "in_cv1": "f_cv1", "in_r1": "f_r1",
             "in_u2": "f_u2", "in_k2": "f_k2", "in_cv2": "f_cv2", "in_r2": "f_r2",
+            "in_int_etr": "f_int_etr", "in_pays_etr": "f_pays_etr",
             "in_tax_lim_1": "tax_lim_1", "in_tax_lim_2": "tax_lim_2", "in_tax_lim_3": "tax_lim_3", "in_tax_lim_4": "tax_lim_4",
             "in_tax_rate_2": "tax_rate_2", "in_tax_rate_3": "tax_rate_3", "in_tax_rate_4": "tax_rate_4", "in_tax_rate_5": "tax_rate_5",
             "in_decote_lim_cel": "decote_lim_cel", "in_decote_base_cel": "decote_base_cel",
@@ -1135,14 +1135,18 @@ elif page_choisie == "🏛️ Fiscalité":
         try: save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
         except: pass
 
-    c_sit1, c_sit2 = st.columns(2)
+    c_sit1, c_sit2, c_sit3 = st.columns(3)
     with c_sit1:
         statut = st.radio("Situation matrimoniale ✍️", ["Célibataire / Divorcé(e) / Veuf(ve)", "Marié(e) / Pacsé(e)"], index=0 if st.session_state.config.get("f_statut", "Célibataire / Divorcé(e) / Veuf(ve)") == "Célibataire / Divorcé(e) / Veuf(ve)" else 1, key="in_statut", on_change=update_fiscal_config)
         enfants = st.number_input("Nombre d'enfants à charge ✍️", min_value=0, max_value=10, value=int(st.session_state.config.get("f_enf", 0)), step=1, key="in_enf", on_change=update_fiscal_config)
     with c_sit2:
-        st.markdown("**Vos revenus nets imposables (Vous)**")
-        salaire_1 = st.number_input("Salaires, etc. en € (Déclarant 1) ✍️", min_value=0.0, value=float(st.session_state.config.get("f_s1", 30000.0)), step=1000.0, key="in_s1", on_change=update_fiscal_config)
-        salaire_2 = st.number_input("Salaires, etc. en € (Déclarant 2) ✍️", min_value=0.0, value=float(st.session_state.config.get("f_s2", 0.0)), step=1000.0, key="in_s2", on_change=update_fiscal_config) if "Marié" in statut else 0.0
+        st.markdown("**Vos revenus nets (Salaires)**")
+        salaire_1 = st.number_input("Déclarant 1 (en €) ✍️", min_value=0.0, value=float(st.session_state.config.get("f_s1", 30000.0)), step=1000.0, key="in_s1", on_change=update_fiscal_config)
+        salaire_2 = st.number_input("Déclarant 2 (en €) ✍️", min_value=0.0, value=float(st.session_state.config.get("f_s2", 0.0)), step=1000.0, key="in_s2", on_change=update_fiscal_config) if "Marié" in statut else 0.0
+    with c_sit3:
+        st.markdown("**Revenus de capitaux étrangers (ex: Revolut)**")
+        interets_etrangers = st.number_input("Montant brut (en €) ✍️", min_value=0.0, value=float(st.session_state.config.get("f_int_etr", 0.0)), step=10.0, key="in_int_etr", on_change=update_fiscal_config)
+        pays_etranger = st.text_input("Pays d'origine (ex: Lituanie) ✍️", value=st.session_state.config.get("f_pays_etr", "Lituanie"), key="in_pays_etr", on_change=update_fiscal_config)
 
     st.markdown("---"); st.markdown("#### 🚗 Frais Professionnels (Frais Réels)"); st.write("Le logiciel calculera automatiquement si la déduction de vos frais réels est plus avantageuse que l'abattement standard de 10 %.")
     col_f1, col_f2 = st.columns(2)
@@ -1219,7 +1223,7 @@ elif page_choisie == "🏛️ Fiscalité":
     elif enfants == 2: parts += 1.0
     elif enfants >= 3: parts += 1.0 + (enfants - 2)
 
-    revenu_base_net_global = (salaire_1 - max(salaire_1 * 0.10, frais_reels_1)) + (salaire_2 - max(salaire_2 * 0.10, frais_reels_2))
+    revenu_base_net_global = (salaire_1 - max(salaire_1 * 0.10, frais_reels_1)) + (salaire_2 - max(salaire_2 * 0.10, frais_reels_2)) + interets_etrangers
     impot_salaires_seuls = calcul_impot_ir(revenu_base_net_global, parts, statut, apply_decote=True)
     
     # Choix Imposition
@@ -1232,53 +1236,55 @@ elif page_choisie == "🏛️ Fiscalité":
         cout_bareme = (calcul_impot_ir(revenu_base_net_global + bilan_net_actions, parts, statut, apply_decote=True) - impot_salaires_seuls) + (bilan_net_actions * (float(st.session_state.config.get("tax_ps", 17.2)) / 100.0))
         choix = "Barème" if cout_bareme < cout_pfu else "PFU"
 
-    taux_commun = (impot_salaires_seuls / (salaire_1 + salaire_2) * 100) if (salaire_1 + salaire_2) > 0 else 0.0
+    taux_commun = (impot_salaires_seuls / (salaire_1 + salaire_2 + interets_etrangers) * 100) if (salaire_1 + salaire_2 + interets_etrangers) > 0 else 0.0
     taux_perso_1 = (calcul_impot_ir((salaire_1 - max(salaire_1 * 0.10, frais_reels_1)), 1.0, "Célibataire", apply_decote=False) / salaire_1 * 100) if salaire_1 > 0 else 0.0
 
     st.subheader(f"📝 2. L'Antisèche du Fisc (Revenus {annee_fiscale})")
     st.write("Naviguez dans les dossiers ci-dessous pour afficher les lignes exactes à remplir sur le site des impôts, adaptées à votre situation.")
 
     # --- DOSSIER 1 : FORMULAIRE 2042 ---
-    with st.expander("📁 Formulaire 2042 (Déclaration Principale & 3916)", expanded=True):
-        st.markdown("### 💡 Recommandation d'imposition globale")
-        if bilan_net_actions <= 0:
-            st.success("✅ **Bilan Négatif ou Nul :** Vous n'avez pas d'impôts à payer sur vos cessions boursières classiques cette année.")
-        else:
-            taux_moyen_bareme = (cout_bareme / bilan_net_actions) * 100 if bilan_net_actions > 0 else 0.0
-            if choix == "Barème":
-                st.success("✅ **Le Barème Progressif est plus avantageux pour vos plus-values !**")
-                st.write(f"Sur vos {format_smart(bilan_net_actions, '€')} de plus-values nettes :\n- Avec la Flat Tax ({st.session_state.config.get('tax_pfu', 30.0)}%) : l'impôt serait de **{format_smart(cout_pfu, '€')}**.\n- Avec le Barème : l'impôt est de **{format_smart(cout_bareme, '€')}** *(Taux effectif : {format_smart(taux_moyen_bareme, '%')} )*.")
-            else:
-                st.success("✅ **La Flat Tax (PFU) est plus avantageuse pour vos plus-values !**")
-                st.write(f"Sur vos {format_smart(bilan_net_actions, '€')} de plus-values nettes :\n- Avec le Barème, la hausse de vos revenus vous ferait basculer dans les tranches hautes, l'impôt serait de **{format_smart(cout_bareme, '€')}**.\n- Avec la Flat Tax : l'impôt est plafonné à **{format_smart(cout_pfu, '€')}**.")
-        
-        st.markdown("#### 📌 Impact sur le Prélèvement à la Source")
-        st.write(f"L'impôt total de votre foyer sur les salaires s'élève à **{format_smart(impot_salaires_seuls, '€')} / an**.")
-        col_taux1, col_taux2 = st.columns(2)
-        with col_taux1: st.info(f"👨‍👩‍👧‍👦 **Option 1 : Le Taux Commun**\n\nLe taux unique appliqué aux deux membres du foyer.\n\n**Taux estimé : {format_smart(taux_commun, '%')}**")
-        if "Marié" in statut:
-            with col_taux2: st.success(f"👤 **Option 2 : Le Taux Personnalisé (Vous)**\n\nLe taux propre à votre salaire brut.\n\n**Votre Taux : {format_smart(taux_perso_1, '%')}**\n\n*(Prélevé sur votre salaire : {format_smart((salaire_1 * (taux_perso_1 / 100)) / 12.0, '€')} / mois)*")
-        
-        if bilan_net_actions > 0: st.markdown(f"> ⚠️ **Attention :** L'impôt supplémentaire sur vos plus-values boursières (**{format_smart(cout_bareme if choix == 'Barème' else cout_pfu, '€')}**) n'est pas prélevé tous les mois. Il sera à régler en une fois lors de la régularisation de l'été prochain.")
-
-        st.divider()
+    with st.expander("📁 Formulaire 2042 (Déclaration Principale)", expanded=True):
         st.markdown("### 🔹 Lignes de la Déclaration 2042")
-        st.markdown("**Comptes à l'étranger (Formulaire 3916) :**")
-        st.markdown("- **Case 8UU** : `À cocher`.")
-        st.markdown("  - *Intitulé :* Swissquote Bank SA")
-        st.markdown("  - *Adresse :* Chemin de la Crétaux 33, 1196 Gland, Suisse")
+        st.write("Ce formulaire centralise tous vos revenus finaux. Voici les cases à vérifier ou à remplir :")
         
         st.markdown("**Plus-Values (Rubrique 3) :**")
         if bilan_net_actions > 0:
-            st.markdown(f"- **Case 3VG** (Plus-values nettes) : Indiquer `{format_smart(bilan_net_actions, '€')}`")
+            st.markdown(f"- **Case 3VG** (Plus-values nettes) : `{format_smart(bilan_net_actions, '€')}`")
             if choix == "Barème": st.markdown("- **Case 2OP** : `À cocher absolument`.")
             else: st.markdown("- **Case 2OP** : `À laisser DÉCOCHÉE`.")
         elif bilan_net_actions < 0:
-            st.markdown(f"- **Case 3VH** (Moins-values nettes) : Indiquer `{format_smart(abs(bilan_net_actions), '€')}`")
+            st.markdown(f"- **Case 3VH** (Moins-values nettes) : `{format_smart(abs(bilan_net_actions), '€')}`")
         else:
             st.markdown("- `Aucune plus-value ou moins-value boursière classique à reporter.`")
+            
+        st.markdown("**Cryptomonnaies (Rubrique 3) :**")
+        if bilan_net_crypto > 0:
+            st.markdown(f"- **Case 3AN** (Plus-values cryptos) : `{format_smart(bilan_net_crypto, '€')}` *(Issu du Formulaire 2086)*")
+        elif bilan_net_crypto < 0:
+            st.markdown(f"- **Case 3BN** (Moins-values cryptos) : `{format_smart(abs(bilan_net_crypto), '€')}` *(Issu du Formulaire 2086)*")
+        else:
+            st.markdown("- `Aucune plus-value ou moins-value crypto à reporter.`")
+            
+        st.markdown("**Revenus Mobiliers (Rubrique 2) :**")
+        if interets_etrangers > 0:
+            st.markdown(f"- **Case 2TR** (Intérêts d'un compte étranger) : `{format_smart(interets_etrangers, '€')}` *(Issu du Formulaire 2047)*")
+        else:
+            st.markdown("- `Aucun intérêt ou dividende étranger à reporter.`")
 
-    # --- DOSSIER 2 : FORMULAIRE 2074 ---
+    # --- DOSSIER 2 : FORMULAIRE 2047 ---
+    with st.expander("📁 Formulaire 2047 (Revenus mobiliers étrangers - ex: Revolut)"):
+        if interets_etrangers <= 0:
+            st.info("Aucun revenu étranger déclaré dans l'étape 1. Formulaire non requis.")
+        else:
+            st.markdown("### 🔹 Rubrique 2 : Des revenus des valeurs et capitaux mobiliers imposables en France")
+            st.write("Le « Fonds monétaire flexible » (Revolut) est considéré comme un compte titre étranger versant des intérêts. Voici les lignes à remplir dans le tableau :")
+            st.markdown(f"- **Ligne 232 (Pays) :** `{pays_etranger}`")
+            st.markdown(f"- **Ligne 234 (Montant brut - Intérêts) :** `{format_smart(interets_etrangers, '€')}`")
+            st.markdown("- **Lignes 235 à 238 :** `0 €` ou laissez vide.")
+            st.markdown(f"- **Ligne 250 (Total) :** `{format_smart(interets_etrangers, '€')}`")
+            st.markdown(f"- **Ligne 252 (Total à reporter) :** `{format_smart(interets_etrangers, '€')}` *(À reporter sur la 2042 case 2TR)*")
+
+    # --- DOSSIER 3 : FORMULAIRE 2074 ---
     with st.expander("📁 Formulaire 2074 (Plus-values Classiques : Actions, ETF...)"):
         if df_actions.empty:
             st.info("Aucune cession d'actions/ETF détectée pour cette année.")
@@ -1362,7 +1368,7 @@ elif page_choisie == "🏛️ Fiscalité":
             else:
                 st.write("Pas de consignes spécifiques pour le Cadre 11/12 cette année (Bilan exact à 0 €).")
 
-    # --- DOSSIER 3 : FORMULAIRE 2086 ---
+    # --- DOSSIER 4 : FORMULAIRE 2086 ---
     with st.expander("📁 Formulaire 2086 (Cryptomonnaies)"):
         if df_cryptos.empty:
             st.info("Aucune cession de cryptomonnaie détectée pour cette année.")
@@ -1392,5 +1398,32 @@ elif page_choisie == "🏛️ Fiscalité":
                     st.markdown(f"- **223 Prix total d'acquisition net :** `{format_smart(row_c['Ligne 223'], '€')}`")
                     st.markdown(f"- **224 Plus-value ou moins-value globale :** `{format_smart(row_c['Ligne 224'], '€', force_sign=True)}`")
                     st.write("---")
-            if bilan_net_crypto > 0: st.info(f"👉 **Sur la 2042, Case 3AN (Plus-value) :** `{format_smart(bilan_net_crypto, '€')}`")
-            elif bilan_net_crypto < 0: st.error(f"👉 **Sur la 2042, Case 3BN (Moins-value) :** `{format_smart(abs(bilan_net_crypto), '€')}`")
+
+    # --- SECTION FINALE : RECOMMANDATION GLOBALE ---
+    st.divider()
+    st.subheader("💡 3. Recommandation d'imposition globale & Prélèvement à la Source")
+    
+    if (df_actions.empty and df_cryptos.empty) or (plus_values_actions == 0 and moins_values_actions == 0): 
+        pass # L'information est déjà traitée dans l'expander 2042
+    elif bilan_net_actions <= 0:
+        pass
+    else:
+        taux_moyen_bareme = (cout_bareme / bilan_net_actions) * 100
+        if choix == "Barème":
+            st.success("✅ **Le Barème Progressif est plus avantageux pour vos plus-values !**")
+            st.write(f"Sur vos {format_smart(bilan_net_actions, '€')} de plus-values nettes :\n- Avec la Flat Tax ({st.session_state.config.get('tax_pfu', 30.0)}%) : l'impôt serait de **{format_smart(cout_pfu, '€')}**.\n- Avec le Barème : l'impôt est de **{format_smart(cout_bareme, '€')}** *(Taux effectif : {format_smart(taux_moyen_bareme, '%')} )*.")
+        else:
+            st.success("✅ **La Flat Tax (PFU) est plus avantageuse pour vos plus-values !**")
+            st.write(f"Sur vos {format_smart(bilan_net_actions, '€')} de plus-values nettes :\n- Avec le Barème, la hausse de vos revenus vous ferait basculer dans les tranches hautes, l'impôt serait de **{format_smart(cout_bareme, '€')}**.\n- Avec la Flat Tax : l'impôt est plafonné à **{format_smart(cout_pfu, '€')}**.")
+
+    st.markdown("#### 📌 Bilan de vos impôts sur les Salaires")
+    st.write(f"L'impôt total de votre foyer sur les salaires (et revenus étrangers) s'élève à **{format_smart(impot_salaires_seuls, '€')} / an**.")
+    col_taux1, col_taux2 = st.columns(2)
+    with col_taux1: 
+        st.info(f"👨‍👩‍👧‍👦 **Option 1 : Le Taux Commun**\n\nLe taux unique appliqué aux deux membres du foyer.\n\n**Taux estimé : {format_smart(taux_commun, '%')}**")
+    if "Marié" in statut:
+        with col_taux2: 
+            st.success(f"👤 **Option 2 : Le Taux Personnalisé (Vous)**\n\nLe taux propre à votre salaire brut.\n\n**Votre Taux : {format_smart(taux_perso_1, '%')}**\n\n*(Prélevé sur votre salaire : {format_smart((salaire_1 * (taux_perso_1 / 100)) / 12.0, '€')} / mois)*")
+    
+    if bilan_net_actions > 0: 
+        st.markdown(f"> ⚠️ **Attention :** L'impôt supplémentaire sur vos plus-values boursières (**{format_smart(cout_bareme if choix == 'Barème' else cout_pfu, '€')}**) n'est pas prélevé tous les mois. Il sera à régler en une fois lors de la régularisation de l'été prochain.")
