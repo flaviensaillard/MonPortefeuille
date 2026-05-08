@@ -27,6 +27,14 @@ if st.sidebar.button("🔄 Recharger l'application", use_container_width=True):
 if page_choisie in ["📊 Tableau de bord", "📋 Liste des actifs", "🏖️ Suivi"]:
     st_autorefresh(interval=15 * 60 * 1000, key="datarefresh")
 
+# --- BASE DE DONNÉES FISCALE HISTORIQUE ---
+FISCAL_DB = {
+    2022: {"tax_lim_1": 10777.0, "tax_lim_2": 27478.0, "tax_lim_3": 78570.0, "tax_lim_4": 168994.0, "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45, "decote_lim_cel": 1870.0, "decote_base_cel": 846.0, "decote_lim_mar": 3100.0, "decote_base_mar": 1395.0, "tax_pfu": 30.0, "tax_ps": 17.2, "frais_repas": 5.00},
+    2023: {"tax_lim_1": 11294.0, "tax_lim_2": 28797.0, "tax_lim_3": 82341.0, "tax_lim_4": 177106.0, "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45, "decote_lim_cel": 2002.0, "decote_base_cel": 906.0, "decote_lim_mar": 3300.0, "decote_base_mar": 1493.0, "tax_pfu": 30.0, "tax_ps": 17.2, "frais_repas": 5.20},
+    2024: {"tax_lim_1": 11520.0, "tax_lim_2": 29370.0, "tax_lim_3": 83984.0, "tax_lim_4": 180648.0, "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45, "decote_lim_cel": 2042.0, "decote_base_cel": 924.0, "decote_lim_mar": 3365.0, "decote_base_mar": 1523.0, "tax_pfu": 30.0, "tax_ps": 17.2, "frais_repas": 5.35},
+    2025: {"tax_lim_1": 11750.0, "tax_lim_2": 29957.0, "tax_lim_3": 85664.0, "tax_lim_4": 184261.0, "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45, "decote_lim_cel": 2083.0, "decote_base_cel": 943.0, "decote_lim_mar": 3432.0, "decote_base_mar": 1553.0, "tax_pfu": 30.0, "tax_ps": 17.2, "frais_repas": 5.50}
+}
+
 # --- 2. SÉCURITÉ ---
 def check_password():
     if "password_correct" not in st.session_state: st.session_state["password_correct"] = False
@@ -74,7 +82,6 @@ def save_sheet(sheet_name, df):
         st.error(f"⚠️ Échec de l'enregistrement dans '{sheet_name}'. Vérifiez les quotas de l'API Google.")
 
 def append_to_sheet(sheet_name, new_row_dict):
-    """V4 : Ajoute une ligne à la fin du fichier sans tout réécrire (Ultra rapide et sûr)."""
     try:
         ws = sh.worksheet(sheet_name)
         headers = ws.row_values(1)
@@ -397,7 +404,7 @@ def recuperer_inflation_france():
     try:
         req = urllib.request.Request(
             "https://www.insee.fr/fr/statistiques/serie/telecharger/001759970?ordre=chronologique&format=csv", 
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Accept': 'text/html,*/*'}
+            headers={'User-Agent': 'Mozilla/5.0', 'Accept': '*/*'}
         )
         with urllib.request.urlopen(req, timeout=8) as resp:
             lines = resp.read().decode('utf-8', errors='ignore').split('\n')
@@ -551,6 +558,7 @@ def get_crypto_tax_data(df_transactions, target_year):
 
 # --- 5. INITIALISATION ---
 if "variations" not in st.session_state: st.session_state.variations = {}
+
 if "config" not in st.session_state:
     df_c = load_sheet("Config", ["Clé", "Valeur"])
     def parse_config_val(k, v):
@@ -560,14 +568,15 @@ if "config" not in st.session_state:
         return extraire_nombre(v)
     st.session_state.config = {str(r["Clé"]).strip(): parse_config_val(r["Clé"], r["Valeur"]) for _, r in df_c.iterrows() if pd.notna(r["Clé"])}
 
+# Valeurs de fallback de la configuration générale
 d_conf = {
     "retraite_apport_mensuel": 250.0, "retraite_taxe": 30.0, "f_statut": "Marié(e) / Pacsé(e)", 
     "f_enf": 0.0, "f_s1": 30000.0, "f_s2": 0.0, "f_u1": False, "f_k1": 0.0, "f_cv1": 5.0, 
     "f_r1": 0.0, "f_u2": False, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0,
-    "tax_lim_1": 11294.0, "tax_lim_2": 28797.0, "tax_lim_3": 82341.0, "tax_lim_4": 177106.0,
-    "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45,
-    "decote_lim_cel": 2002.0, "decote_base_cel": 906.0, "decote_lim_mar": 3300.0, "decote_base_mar": 1493.0,
-    "tax_pfu": 30.0, "tax_ps": 17.2, "frais_repas": 5.35,
+    "tax_lim_1": FISCAL_DB[2025]["tax_lim_1"], "tax_lim_2": FISCAL_DB[2025]["tax_lim_2"], "tax_lim_3": FISCAL_DB[2025]["tax_lim_3"], "tax_lim_4": FISCAL_DB[2025]["tax_lim_4"],
+    "tax_rate_2": FISCAL_DB[2025]["tax_rate_2"], "tax_rate_3": FISCAL_DB[2025]["tax_rate_3"], "tax_rate_4": FISCAL_DB[2025]["tax_rate_4"], "tax_rate_5": FISCAL_DB[2025]["tax_rate_5"],
+    "decote_lim_cel": FISCAL_DB[2025]["decote_lim_cel"], "decote_base_cel": FISCAL_DB[2025]["decote_base_cel"], "decote_lim_mar": FISCAL_DB[2025]["decote_lim_mar"], "decote_base_mar": FISCAL_DB[2025]["decote_base_mar"],
+    "tax_pfu": FISCAL_DB[2025]["tax_pfu"], "tax_ps": FISCAL_DB[2025]["tax_ps"], "frais_repas": FISCAL_DB[2025]["frais_repas"],
     "urssaf_bareme": '{"3":[0.529, 0.316, 1065, 0.370], "4":[0.606, 0.340, 1330, 0.407], "5":[0.636, 0.357, 1395, 0.427], "6":[0.665, 0.374, 1457, 0.447], "7":[0.697, 0.394, 1515, 0.470]}'
 }
 for k, v in d_conf.items():
@@ -1075,7 +1084,15 @@ elif page_choisie == "🏛️ Fiscalité":
 
     df_t = st.session_state.transactions.copy(); df_t['Date_DT'] = pd.to_datetime(df_t.get('Date'), dayfirst=True, errors='coerce')
     annees_dispos = sorted(df_t['Date_DT'].dropna().dt.year.unique().tolist(), reverse=True) if not df_t.empty else [datetime.datetime.now().year]
-    annee_fiscale = st.selectbox("📅 Sélectionner l'année des revenus (à déclarer l'année suivante) :", annees_dispos)
+    
+    def on_year_change():
+        y = st.session_state.annee_fiscale_select
+        db_y = y if y in FISCAL_DB else max(FISCAL_DB.keys())
+        for k, v in FISCAL_DB[db_y].items():
+            st.session_state.config[k] = v
+            st.session_state[f"in_{k}"] = v
+            
+    annee_fiscale = st.selectbox("📅 Sélectionner l'année des revenus (à déclarer l'année suivante) :", annees_dispos, key="annee_fiscale_select", on_change=on_year_change)
     st.divider(); st.subheader("👤 1. Ma Situation Familiale & Professionnelle")
     
     def update_fiscal_config():
@@ -1090,8 +1107,7 @@ elif page_choisie == "🏛️ Fiscalité":
             "in_tax_pfu": "tax_pfu", "in_tax_ps": "tax_ps", "in_frais_repas": "frais_repas"
         }
         for in_key, out_key in key_mapping.items():
-            if in_key in st.session_state:
-                st.session_state.config[out_key] = st.session_state[in_key]
+            if in_key in st.session_state: st.session_state.config[out_key] = st.session_state[in_key]
         try: save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
         except: pass
 
@@ -1129,7 +1145,7 @@ elif page_choisie == "🏛️ Fiscalité":
 
     st.divider()
     with st.expander("⚙️ Modifier les barèmes et taux fiscaux (Mode Avancé)"):
-        st.write("L'État modifie ces valeurs chaque année. Vous pouvez les ajuster ici pour rester à jour pour les années futures.")
+        st.write("Le mode Avancé charge automatiquement les barèmes officiels de l'année sélectionnée. Vous pouvez tout de même tester vos propres chiffres.")
         col_b1, col_b2, col_b3 = st.columns(3)
         with col_b1:
             st.markdown("**Plafonds (Revenu 1 part)**")
