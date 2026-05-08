@@ -1175,10 +1175,20 @@ elif page_choisie == "🏛️ Fiscalité":
     if df_actions.empty and df_cryptos.empty:
         st.info(f"Aucune cession d'actifs détectée dans la feuille 'Transaction' pour l'année {annee_fiscale}.")
         plus_values_actions = moins_values_actions = plus_values_crypto = moins_values_crypto = 0.0
+        df_a_net_per_asset = pd.DataFrame()
     else:
         st.write("Ce tableau génère les montants exacts à copier-coller dans vos formulaires fiscaux français (2074 pour les ETF/Actions et 2086 pour les Cryptos).")
-        plus_values_actions = df_actions[df_actions["PV Num"] > 0]["PV Num"].sum() if not df_actions.empty else 0.0
-        moins_values_actions = abs(df_actions[df_actions["PV Num"] < 0]["PV Num"].sum()) if not df_actions.empty else 0.0
+        
+        # V7 Fix: Calculate global plus/moins values based on aggregated ASSET performance, not single transactions.
+        if not df_actions.empty:
+            df_a_net_per_asset = df_actions.groupby("Actif")["PV Num"].sum().reset_index()
+            plus_values_actions = df_a_net_per_asset[df_a_net_per_asset["PV Num"] > 0]["PV Num"].sum()
+            moins_values_actions = abs(df_a_net_per_asset[df_a_net_per_asset["PV Num"] < 0]["PV Num"].sum())
+        else:
+            plus_values_actions = 0.0
+            moins_values_actions = 0.0
+            df_a_net_per_asset = pd.DataFrame()
+
         plus_values_crypto = df_cryptos[df_cryptos["PV Num"] > 0]["PV Num"].sum() if not df_cryptos.empty else 0.0
         moins_values_crypto = abs(df_cryptos[df_cryptos["PV Num"] < 0]["PV Num"].sum()) if not df_cryptos.empty else 0.0
 
@@ -1312,9 +1322,8 @@ elif page_choisie == "🏛️ Fiscalité":
         
         mv_restante = moins_values_actions
         lignes_cadre_11 = []
-        df_a_groups = df_actions.groupby("Actif")["PV Num"].sum().reset_index()
         
-        for idx, row in df_a_groups[df_a_groups["PV Num"] > 0].iterrows():
+        for idx, row in df_a_net_per_asset[df_a_net_per_asset["PV Num"] > 0].iterrows():
             pv_actif = row["PV Num"]
             imput = min(pv_actif, mv_restante)
             mv_restante -= imput
