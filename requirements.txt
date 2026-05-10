@@ -1,7 +1,7 @@
 streamlit
 pandas
+numpy
 yfinance
 plotly
 streamlit-autorefresh
-gspread
-gspread-dataframe
+supabase
