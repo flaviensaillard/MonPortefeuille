@@ -12,18 +12,18 @@ def init_google_sheets():
     gc = gspread.authorize(credentials)
     return gc.open_by_key("1hkZoHQ1vvtbI1DYHR_OnofWn4jG92JGyxJjN-FedsWk")
 
-def execute_with_retry(func, max_attempts=3, initial_delay=2):
-    """Bouclier anti-crash : Réessaie automatiquement si l'API Google bloque."""
+def execute_with_retry(func, max_attempts=5, initial_delay=5):
+    """Bouclier anti-crash musclé : Laisse passer la minute de pénalité de Google (Quota 429)."""
     delay = initial_delay
     for attempt in range(max_attempts):
         try:
             return func()
         except Exception as e:
             if attempt == max_attempts - 1:
-                st.error(f"⚠️ Échec définitif de communication avec la base de données après {max_attempts} tentatives.")
+                st.error(f"⚠️ Échec définitif de communication avec la base de données après {max_attempts} tentatives. Les serveurs de Google limitent temporairement l'accès.")
                 raise e
             time.sleep(delay)
-            delay *= 2  # Exponential backoff: attend 2s, puis 4s, puis 8s.
+            delay *= 2  # Exponential backoff: attend 5s, puis 10s, 20s, 40s.
 
 def load_sheet(sheet_name, default_cols):
     def _load():
