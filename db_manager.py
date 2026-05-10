@@ -12,19 +12,21 @@ def init_google_sheets():
     gc = gspread.authorize(credentials)
     return gc.open_by_key("1hkZoHQ1vvtbI1DYHR_OnofWn4jG92JGyxJjN-FedsWk")
 
-def execute_with_retry(func, max_attempts=5, initial_delay=5):
-    """Bouclier anti-crash musclé : Laisse passer la minute de pénalité de Google (Quota 429)."""
+def execute_with_retry(func, max_attempts=5, initial_delay=2):
+    """Bouclier anti-crash : Patiente si Google bloque."""
     delay = initial_delay
     for attempt in range(max_attempts):
         try:
             return func()
         except Exception as e:
             if attempt == max_attempts - 1:
-                st.error(f"⚠️ Échec définitif de communication avec la base de données après {max_attempts} tentatives. Les serveurs de Google limitent temporairement l'accès.")
+                st.error("⚠️ Échec définitif de communication avec la base de données. Les serveurs de Google bloquent la requête.")
                 raise e
             time.sleep(delay)
-            delay *= 2  # Exponential backoff: attend 5s, puis 10s, 20s, 40s.
+            delay *= 2
 
+# MAGIE V18 : On met en cache serveur pour éviter de spammer Google
+@st.cache_data(ttl=600, show_spinner=False)
 def load_sheet(sheet_name, default_cols):
     def _load():
         sh = init_google_sheets()
@@ -33,6 +35,8 @@ def load_sheet(sheet_name, default_cols):
         if df.empty: return pd.DataFrame(columns=default_cols)
         return df
     try:
+        # Anti-rafale : 1 seconde de pause avant chaque lecture d'onglet
+        time.sleep(1)
         return execute_with_retry(_load)
     except Exception:
         return pd.DataFrame(columns=default_cols)
@@ -47,6 +51,9 @@ def save_sheet(sheet_name, df):
         ws.clear()
         set_with_dataframe(ws, df, include_index=False)
     execute_with_retry(_save)
+    
+    # On force Streamlit à vider sa mémoire car la donnée a changé !
+    load_sheet.clear()
 
 def append_to_sheet(sheet_name, new_row_dict):
     def _append():
@@ -59,3 +66,6 @@ def append_to_sheet(sheet_name, new_row_dict):
         row_values = [new_row_dict.get(h, "") for h in headers]
         ws.append_row(row_values)
     execute_with_retry(_append)
+    
+    # On force Streamlit à vider sa mémoire car la donnée a changé !
+    load_sheet.clear()
