@@ -39,18 +39,31 @@ def execute_with_retry(func, max_attempts=5, initial_delay=5):
 
 # V19 : TTL passé à 1 heure (3600s) pour minimiser les contacts avec Google
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_sheet(sheet_name, default_cols):
-    def _load():
-        sh = get_spreadsheet()
-        ws = sh.worksheet(sheet_name)
-        df = get_as_dataframe(ws, evaluate_formulas=True).dropna(how='all').dropna(axis=1, how='all')
-        if df.empty: return pd.DataFrame(columns=default_cols)
-        return df
+def load_sheet(table_name, default_cols):
+    """Télécharge les données depuis Supabase (MODE DEBUG)."""
+    supabase = get_supabase_client()
     try:
-        # Délai artificiel pour ne pas bombarder Google au démarrage
-        time.sleep(random.uniform(0.5, 1.5))
-        return execute_with_retry(_load)
-    except Exception:
+        # On tente de télécharger les données
+        response = supabase.table(table_name).select("*").execute()
+        df = pd.DataFrame(response.data)
+        
+        # 🚨 ALARME VISUELLE POUR NOUS AIDER 🚨
+        if df.empty:
+            st.warning(f"🔍 DEBUG - Table '{table_name}' lue avec succès, mais Supabase dit qu'elle contient 0 ligne !")
+        else:
+            st.success(f"✅ DEBUG - Table '{table_name}' lue ! J'ai trouvé {len(df)} lignes et ces colonnes : {list(df.columns)}")
+        
+        if df.empty:
+            return pd.DataFrame(columns=default_cols)
+            
+        if 'id' in df.columns:
+            df = df.drop(columns=['id'])
+            
+        return df
+        
+    except Exception as e:
+        # 🚨 ALARME ROUGE : Affiche l'erreur exacte du serveur
+        st.error(f"❌ ERREUR CRITIQUE sur la table '{table_name}' : {str(e)}")
         return pd.DataFrame(columns=default_cols)
 
 def save_sheet(sheet_name, df):
