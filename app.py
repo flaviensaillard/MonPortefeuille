@@ -370,7 +370,12 @@ if page_choisie == "📊 Tableau de bord":
                     }
                     # On l'envoie dans Supabase
                     append_to_sheet("Projections", nouvelle_ligne)
-                    st.success("✅ Ligne écrite avec succès dans 'Projections' !")
+                    
+                    # 🔥 LA CORRECTION EST ICI : 
+                    # On force Streamlit à re-télécharger immédiatement les projections pour mettre à jour la session
+                    st.session_state.projections = load_sheet("Projections", [])
+                    
+                    st.success("✅ Ligne écrite et synchronisée dans l'application !")
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Erreur lors de la simulation : {e}")
