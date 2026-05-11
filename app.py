@@ -333,7 +333,7 @@ if page_choisie == "📊 Tableau de bord":
         df_d = df_p.copy(); df_d['Date_DT'] = pd.to_datetime(df_d['Date'], dayfirst=True, errors='coerce'); df_d = df_d.dropna(subset=['Date_DT']).sort_values('Date_DT')
         if not df_d.empty:
             df_past = df_d[df_d['Date_DT'] <= pd.Timestamp.now() - pd.DateOffset(years=1)]
-            row_ref = df_past 
+            row_ref = df_past.iloc[-1] if not df_past.empty else df_d.iloc[0] 
             v_ref_strat, v_ref_tg = extraire_nombre(row_ref["Actifs Stratégiques"]), extraire_nombre(row_ref["Total Global"])
             delta, delta_tg = val_invest - v_ref_strat, val_total - v_ref_tg
             if v_ref_strat > 0: p_delta = (delta / v_ref_strat) * 100
@@ -351,7 +351,6 @@ if page_choisie == "📊 Tableau de bord":
     c_btn, c_stat = st.columns([1, 2])
     with c_btn:
         if st.button("🔄 Actualiser les cours", use_container_width=True):
-            # UX : Ajout d'un spinner visuel pour faire patienter l'utilisateur
             with st.spinner("📡 Connexion aux marchés (Yahoo/Binance)..."):
                 actualiser_cours_internet(False)
             st.rerun()
@@ -359,6 +358,39 @@ if page_choisie == "📊 Tableau de bord":
         if besoin_req: st.warning("⚠️ **Rééquilibrage nécessaire** (Certains actifs ont dépassé les tolérances.)")
         else: st.success("✅ **Équilibré** (Votre stratégie d'allocation cible est respectée.)")
     st.divider()
+
+    # =====================================================================
+    # NOUVEAU : RÉCUPÉRATION DE LA PHOTO DE MINUIT & CALCULS DES DELTAS
+    # =====================================================================
+    photo_veille = obtenir_derniere_projection_veille()
+    delta_global_txt = ""
+    delta_strat_txt = ""
+
+    if photo_veille:
+        val_global_veille = photo_veille["Total Global"]
+        val_strat_veille = photo_veille["Actifs Stratégiques"]
+        
+        # Calcul de la variation pour le Total Global
+        if val_global_veille > 0:
+            diff_val = val_total - val_global_veille
+            diff_pct = (diff_val / val_global_veille) * 100
+            delta_global_txt = f"{diff_val:+.2f} $ ({diff_pct:+.2f}%) depuis minuit"
+            
+        # Calcul de la variation pour les Actifs Stratégiques
+        if val_strat_veille > 0:
+            diff_strat_val = val_invest - val_strat_veille
+            diff_strat_pct = (diff_strat_val / val_strat_veille) * 100
+            delta_strat_txt = f"{diff_strat_val:+.2f} $ ({diff_strat_pct:+.2f}%) depuis minuit"
+    # =====================================================================
+
+    st.subheader("🌍 2. Total Global (Toutes liquidités incluses)")
+    c_tg, _ = st.columns(2)
+    with c_tg:
+        # On affiche le montant total global avec le delta calculé depuis la photo de minuit !
+        afficher_montant_double("Total Global", val_total, delta_str=delta_global_txt)
+        st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if v_jour_tg_usd >= 0 else '📉'} Performance 1 an : <strong style='color:{'#2ecc71' if delta_tg >= 0 else '#e74c3c'}'>{format_smart(delta_tg, '$', force_sign=True)} ({format_smart(p_delta_tg, '%', force_sign=True)})</strong></span></div>", unsafe_allow_html=True)
+    
+    # ... (le reste de ton code avec le bloc "if not df_p.empty:" et les graphiques reste strictement le même !)
 
     st.subheader("🌍 2. Total Global (Toutes liquidités incluses)")
     c_tg, _ = st.columns(2)
