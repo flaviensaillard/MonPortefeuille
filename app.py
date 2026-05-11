@@ -351,35 +351,9 @@ if page_choisie == "📊 Tableau de bord":
     c_btn, c_stat = st.columns([1, 2])
     with c_btn:
         if st.button("🔄 Actualiser les cours", use_container_width=True):
-            with st.spinner("📡 Connexion aux marchés..."):
+            with st.spinner("📡 Connexion aux marchés (Yahoo/Binance)..."):
                 actualiser_cours_internet(False)
             st.rerun()
-            
-        # =====================================================================
-        # 🤖 BOUTON DE TEST : SIMULER LE PASSAGE DU ROBOT DE MINUIT
-        # =====================================================================
-        if st.button("🤖 Simuler le Robot (Sauvegarder J-0)", use_container_width=True):
-            with st.spinner("💾 Enregistrement de la photo actuelle..."):
-                try:
-                    # On prépare la ligne exactement comme le ferait le robot
-                    nouvelle_ligne = {
-                        "Date": datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-                        "Capital investi": cap_actuel,
-                        "Actifs Stratégiques": val_invest,
-                        "Total Global": val_total
-                    }
-                    # On l'envoie dans Supabase
-                    append_to_sheet("Projections", nouvelle_ligne)
-                    
-                    # 🔥 LA CORRECTION EST ICI : 
-                    # On force Streamlit à re-télécharger immédiatement les projections pour mettre à jour la session
-                    st.session_state.projections = load_sheet("Projections", [])
-                    
-                    st.success("✅ Ligne écrite et synchronisée dans l'application !")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Erreur lors de la simulation : {e}")
-        # =====================================================================
     with c_stat:
         if besoin_req: st.warning("⚠️ **Rééquilibrage nécessaire** (Certains actifs ont dépassé les tolérances.)")
         else: st.success("✅ **Équilibré** (Votre stratégie d'allocation cible est respectée.)")
