@@ -360,20 +360,30 @@ if page_choisie == "📊 Tableau de bord":
     st.divider()
 
     # =====================================================================
-    # NOUVEAU : RÉCUPÉRATION DE LA PHOTO DE MINUIT & CALCULS DES DELTAS
+    # NOUVEAU : RÉCUPÉRATION DE LA PHOTO DE MINUIT & CALCULS DES DELTAS CORRIGÉS
     # =====================================================================
     photo_veille = obtenir_derniere_projection_veille()
     delta_global_txt = ""
     delta_strat_txt = ""
 
     if photo_veille:
-        val_global_veille = photo_veille["Total Global"]
-        val_strat_veille = photo_veille["Actifs Stratégiques"]
+        # On s'assure d'avoir des nombres purs (float)
+        try:
+            val_global_veille = float(photo_veille["Total Global"])
+            val_strat_veille = float(photo_veille["Actifs Stratégiques"])
+        except Exception:
+            val_global_veille = 0.0
+            val_strat_veille = 0.0
+        
+        # 🧪 ZONE DE DÉBOGAGE (Affiche les valeurs brutes dans ta console Streamlit pour vérification)
+        # st.write(f"DEBUG - Actuel: {val_total} | Veille: {val_global_veille}")
         
         # Calcul de la variation pour le Total Global
         if val_global_veille > 0:
             diff_val = val_total - val_global_veille
             diff_pct = (diff_val / val_global_veille) * 100
+            
+            # Affichage propre : s'il y a une baisse, le signe moins (-) est mis automatiquement par Python
             delta_global_txt = f"{diff_val:+.2f} $ ({diff_pct:+.2f}%) depuis minuit"
             
         # Calcul de la variation pour les Actifs Stratégiques
@@ -382,7 +392,6 @@ if page_choisie == "📊 Tableau de bord":
             diff_strat_pct = (diff_strat_val / val_strat_veille) * 100
             delta_strat_txt = f"{diff_strat_val:+.2f} $ ({diff_strat_pct:+.2f}%) depuis minuit"
     # =====================================================================
-
     st.subheader("🌍 2. Total Global (Toutes liquidités incluses)")
     c_tg, _ = st.columns(2)
     with c_tg:
