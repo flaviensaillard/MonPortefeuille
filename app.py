@@ -367,6 +367,11 @@ if page_choisie == "📊 Tableau de bord":
     delta_strat_txt = ""
 
     if photo_veille:
+        # 🧪 ZONE DE TEST TEMPORAIRE
+        st.write("--- 🧪 DEBUG DES VALEURS ---")
+        st.write(f"**Total Global** -> Actuel : `{val_total}` | Veille extrait : `{photo_veille['Total Global']}`")
+        st.write(f"**Actifs Stratégiques** -> Actuel (Investi) : `{val_invest}` | Veille extrait : `{photo_veille['Actifs Stratégiques']}`")
+        st.write("----------------------------")
         # On s'assure d'avoir des nombres purs (float)
         try:
             val_global_veille = float(photo_veille["Total Global"])
