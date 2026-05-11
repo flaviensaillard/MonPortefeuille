@@ -66,3 +66,28 @@ def append_to_sheet(table_name, new_row_dict):
         load_sheet.clear()
     except Exception as e:
         st.error(f"⚠️ Erreur d'ajout sur la table {table_name}: {e}")
+def obtenir_derniere_projection_veille():
+    """
+    Récupère l'avant-dernière ou la dernière ligne de la table Projections
+    pour servir de point de comparaison J-1 (veille).
+    """
+    try:
+        # On charge la feuille Projections
+        df_proj = load_sheet("Projections", [])
+        if df_proj.empty:
+            return None
+        
+        # On s'assure du bon tri par date
+        df_proj["Date_Parsed"] = pd.to_datetime(df_proj["Date"], dayfirst=True, errors="coerce")
+        df_proj = df_proj.dropna(subset=["Date_Parsed"]).sort_values("Date_Parsed")
+        
+        if not df_proj.empty:
+            # On extrait la toute dernière ligne enregistrée (la photo du robot de minuit)
+            derniere_ligne = df_proj.iloc[-1]
+            return {
+                "Total Global": float(derniere_ligne.get("Total Global", 0.0)),
+                "Actifs Stratégiques": float(derniere_ligne.get("Actifs Stratégiques", 0.0))
+            }
+    except Exception as e:
+        print(f"Erreur lors de la lecture J-1 : {e}")
+    return None
