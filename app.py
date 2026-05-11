@@ -359,20 +359,14 @@ if page_choisie == "📊 Tableau de bord":
         else: st.success("✅ **Équilibré** (Votre stratégie d'allocation cible est respectée.)")
     st.divider()
 
-    # =====================================================================
-    # NOUVEAU : RÉCUPÉRATION DE LA PHOTO DE MINUIT & CALCULS DES DELTAS CORRIGÉS
+# =====================================================================
+    # NOUVEAU : RÉCUPÉRATION DE LA PHOTO DE MINUIT & CALCULS DES DELTAS
     # =====================================================================
     photo_veille = obtenir_derniere_projection_veille()
     delta_global_txt = ""
     delta_strat_txt = ""
 
     if photo_veille:
-        # 🧪 ZONE DE TEST TEMPORAIRE
-        st.write("--- 🧪 DEBUG DES VALEURS ---")
-        st.write(f"**Total Global** -> Actuel : `{val_total}` | Veille extrait : `{photo_veille['Total Global']}`")
-        st.write(f"**Actifs Stratégiques** -> Actuel (Investi) : `{val_invest}` | Veille extrait : `{photo_veille['Actifs Stratégiques']}`")
-        st.write("----------------------------")
-        # On s'assure d'avoir des nombres purs (float)
         try:
             val_global_veille = float(photo_veille["Total Global"])
             val_strat_veille = float(photo_veille["Actifs Stratégiques"])
@@ -380,89 +374,53 @@ if page_choisie == "📊 Tableau de bord":
             val_global_veille = 0.0
             val_strat_veille = 0.0
         
-        # 🧪 ZONE DE DÉBOGAGE (Affiche les valeurs brutes dans ta console Streamlit pour vérification)
-        # st.write(f"DEBUG - Actuel: {val_total} | Veille: {val_global_veille}")
-        
-        # Calcul de la variation pour le Total Global
+        # Calcul de la variation pour le Total Global depuis minuit
         if val_global_veille > 0:
             diff_val = val_total - val_global_veille
             diff_pct = (diff_val / val_global_veille) * 100
-            
-            # Affichage propre : s'il y a une baisse, le signe moins (-) est mis automatiquement par Python
             delta_global_txt = f"{diff_val:+.2f} $ ({diff_pct:+.2f}%) depuis minuit"
             
-        # Calcul de la variation pour les Actifs Stratégiques
+        # Calcul de la variation pour les Actifs Stratégiques depuis minuit
         if val_strat_veille > 0:
             diff_strat_val = val_invest - val_strat_veille
             diff_strat_pct = (diff_strat_val / val_strat_veille) * 100
             delta_strat_txt = f"{diff_strat_val:+.2f} $ ({diff_strat_pct:+.2f}%) depuis minuit"
     # =====================================================================
+
+    # --- SECTION 2 : TOTAL GLOBAL ---
     st.subheader("🌍 2. Total Global (Toutes liquidités incluses)")
     c_tg, _ = st.columns(2)
     with c_tg:
-        # On affiche le montant total global avec le delta calculé depuis la photo de minuit !
+        # On affiche le montant avec le delta calculé par rapport à la veille
         afficher_montant_double("Total Global", val_total, delta_str=delta_global_txt)
-        st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if v_jour_tg_usd >= 0 else '📉'} Performance 1 an : <strong style='color:{'#2ecc71' if delta_tg >= 0 else '#e74c3c'}'>{format_smart(delta_tg, '$', force_sign=True)} ({format_smart(p_delta_tg, '%', force_sign=True)})</strong></span></div>", unsafe_allow_html=True)
-    
-    # ... (le reste de ton code avec le bloc "if not df_p.empty:" et les graphiques reste strictement le même !)
-
-    st.subheader("🌍 2. Total Global (Toutes liquidités incluses)")
-    c_tg, _ = st.columns(2)
-    with c_tg:
-        afficher_montant_double("Total Global", val_total, f"{format_smart(delta_tg, '$', force_sign=True)} ({format_smart(p_delta_tg, '%', force_sign=True)} sur 1 an glissant)")
-        st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if v_jour_tg_usd >= 0 else '📉'} Aujourd'hui : <strong style='color:{'#2ecc71' if v_jour_tg_usd >= 0 else '#e74c3c'}'>{format_smart(v_jour_tg_usd, '$', force_sign=True)} ({format_smart(pct_jour_tg, '%', force_sign=True)})</strong></span></div>", unsafe_allow_html=True)
-    
-    if not df_p.empty:
-        df_v_tg = df_p_live.copy(); df_v_tg['Date_DT'] = pd.to_datetime(df_v_tg['Date'], dayfirst=True, errors='coerce')
-        df_v_tg = df_v_tg.dropna(subset=['Date_DT']).sort_values('Date_DT').reset_index(drop=True)
-        st.markdown("**📈 Évolution & Performance globale**")
-        cf1, cf2 = st.columns(2)
-        f_tg = cf1.radio("Période globale :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année"], horizontal=True, key="f_tg")
-        m_tg = cf2.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=True, key="m_tg")
         
-        n = pd.Timestamp.now()
-        if f_tg == "Depuis 1 an": df_v_tg = df_v_tg[df_v_tg['Date_DT'] >= (n - pd.DateOffset(years=1))]
-        elif f_tg == "Depuis le début de l'année": df_v_tg = df_v_tg[df_v_tg['Date_DT'] >= pd.Timestamp(year=n.year - 1, month=12, day=31)]
-            
-        if not df_v_tg.empty:
-            df_v_tg.set_index('Date_DT', inplace=True)
-            d_usd = df_v_tg['TG_Evolution cumulée $'].iloc[-1] - df_v_tg['TG_Evolution cumulée $'].iloc[0]
-            pct = (d_usd / df_v_tg['Total Global'].iloc[0] * 100) if df_v_tg['Total Global'].iloc[0] > 0 else 0.0
-            md, mf = 1 + df_v_tg['TG_Score TWR %'].iloc[0] / 100, 1 + df_v_tg['TG_Score TWR %'].iloc[-1] / 100
-            twr_p = ((mf / md) - 1) * 100 if md != 0 else 0.0
-            
-            cg1, cg2 = st.columns([1, 3])
-            with cg1:
-                if "ROI" in m_tg:
-                    afficher_montant_double("Gains nets globaux", df_v_tg['TG_Evolution cumulée $'].iloc[-1], f"{format_smart(d_usd, '$', force_sign=True)} ({format_smart(pct, '%', force_sign=True)} sur la période)", taille="medium")
-                else:
-                    st.metric("Score TWR Global (%)", f"{format_smart(df_v_tg['TG_Score TWR %'].iloc[-1], '%', force_sign=True)}", f"{format_smart(twr_p, '%', force_sign=True)} (sur la période)")
-            with cg2:
-                fig_lt = px.line(df_v_tg.reset_index(), x='Date_DT', y='TG_Evolution cumulée $' if "ROI" in m_tg else 'TG_Score TWR %')
-                fig_lt.update_traces(line_shape='spline')
-                # UX : Optimisation Mobile de la légende
-                fig_lt.update_layout(xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
-                fig_lt.update_yaxes(zeroline=False, rangemode="normal")
-                st.plotly_chart(fig_lt, use_container_width=True)
+        # On affiche la performance sur 1 an glissant juste en dessous
+        st.markdown(
+            f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'>"
+            f"<span style='font-size:1.1em;'>{'📈' if delta_tg >= 0 else '📉'} Performance 1 an : "
+            f"<strong style='color:{'#2ecc71' if delta_tg >= 0 else '#e74c3c'}'>{format_smart(delta_tg, '$', force_sign=True)} ({format_smart(p_delta_tg, '%', force_sign=True)})</strong>"
+            f"</span></div>", 
+            unsafe_allow_html=True
+        )
+    
+    # [Ici se trouve ton bloc "if not df_p.empty:" avec le graphique et la répartition du patrimoine...]
+    # (Garde-le tel quel dans ton fichier, passe directement à la section 3 ci-dessous)
 
-        st.write(""); st.markdown("**🌍 Répartition du Patrimoine (Total Global)**")
-        cp1, _ = st.columns(2)
-        with cp1:
-            df_p_tg = df_actuel.copy(); df_p_tg['Val'] = df_p_tg['Valeur totale'].apply(extraire_nombre)
-            df_pie_tg = df_p_tg[df_p_tg['Val'] > 0].groupby('Type')['Val'].sum().reset_index()
-            if not df_pie_tg.empty:
-                fig_tg = px.pie(df_pie_tg, values='Val', names='Type', color='Type', color_discrete_map={"🛢️ Action": "#e74c3c", "📜 Obligation": "#3498db", "💰 Or": "#f1c40f", "₿ Crypto": "#9b59b6", "💵 Cash": "#2ecc71", "🏦 Cash réserve": "#f39c12"}, hole=0.4)
-                fig_tg.update_traces(textposition='inside', textinfo='percent+label')
-                # UX : Optimisation Mobile
-                fig_tg.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5), margin=dict(t=0, b=0, l=0, r=0))
-                st.plotly_chart(fig_tg, use_container_width=True)
-    st.divider()
-
+    # --- SECTION 3 : ACTIFS STRATÉGIQUES ---
     st.subheader("🎯 3. Actifs Stratégiques (Investissements cibles)")
     c_st, _ = st.columns(2)
     with c_st:
-        afficher_montant_double("Actifs Stratégiques", val_invest, f"{format_smart(delta, '$', force_sign=True)} ({format_smart(p_delta, '%', force_sign=True)} sur 1 an glissant)")
-        st.markdown(f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'><span style='font-size:1.1em;'>{'📈' if v_jour_strat_usd >= 0 else '📉'} Aujourd'hui : <strong style='color:{'#2ecc71' if v_jour_strat_usd >= 0 else '#e74c3c'}'>{format_smart(v_jour_strat_usd, '$', force_sign=True)} ({format_smart(pct_jour_strat, '%', force_sign=True)})</strong></span></div>", unsafe_allow_html=True)
+        # CORRECTION ICI : On utilise maintenant "delta_strat_txt" (le calcul J-1 à -48.90$) au lieu de l'ancien calcul en direct
+        afficher_montant_double("Actifs Stratégiques", val_invest, delta_str=delta_strat_txt)
+        
+        # On affiche la performance sur 1 an glissant juste en dessous
+        st.markdown(
+            f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'>"
+            f"<span style='font-size:1.1em;'>{'📈' if delta >= 0 else '📉'} Performance 1 an : "
+            f"<strong style='color:{'#2ecc71' if delta >= 0 else '#e74c3c'}'>{format_smart(delta, '$', force_sign=True)} ({format_smart(p_delta, '%', force_sign=True)})</strong>"
+            f"</span></div>", 
+            unsafe_allow_html=True
+        )
     
     if df_p.empty: st.info("Aucune donnée.")
     else:
