@@ -317,6 +317,10 @@ initialize_state()
 
 # --- 5. LOGIQUE DES PAGES (UI) ---
 
+initialize_state()
+
+# --- 5. LOGIQUE DES PAGES (UI) ---
+
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
     df_actuel, df_p = st.session_state.donnees, st.session_state.projections
@@ -329,7 +333,7 @@ if page_choisie == "📊 Tableau de bord":
         df_d = df_p.copy(); df_d['Date_DT'] = pd.to_datetime(df_d['Date'], dayfirst=True, errors='coerce'); df_d = df_d.dropna(subset=['Date_DT']).sort_values('Date_DT')
         if not df_d.empty:
             df_past = df_d[df_d['Date_DT'] <= pd.Timestamp.now() - pd.DateOffset(years=1)]
-            row_ref = df_past.iloc[-1] if not df_past.empty else df_d.iloc[0] 
+            row_ref = df_past 
             v_ref_strat, v_ref_tg = extraire_nombre(row_ref["Actifs Stratégiques"]), extraire_nombre(row_ref["Total Global"])
             delta, delta_tg = val_invest - v_ref_strat, val_total - v_ref_tg
             if v_ref_strat > 0: p_delta = (delta / v_ref_strat) * 100
