@@ -378,13 +378,13 @@ if page_choisie == "📊 Tableau de bord":
         if val_global_veille > 0:
             diff_val = val_total - val_global_veille
             diff_pct = (diff_val / val_global_veille) * 100
-            delta_global_txt = f"{diff_val:+.2f} $ ({diff_pct:+.2f}%)"
+            delta_global_txt = f"{diff_val:+.2f} $ ({diff_pct:+.2f}%) Aujourd'hui"
             
         # Calcul de la variation pour les Actifs Stratégiques depuis minuit
         if val_strat_veille > 0:
             diff_strat_val = val_invest - val_strat_veille
             diff_strat_pct = (diff_strat_val / val_strat_veille) * 100
-            delta_strat_txt = f"{diff_strat_val:+.2f} $ ({diff_strat_pct:+.2f}%)"
+            delta_strat_txt = f"{diff_strat_val:+.2f} $ ({diff_strat_pct:+.2f}%) Aujourd'hui"
     # =====================================================================
 
     # --- SECTION 2 : TOTAL GLOBAL ---
