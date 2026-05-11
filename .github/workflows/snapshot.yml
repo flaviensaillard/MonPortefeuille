@@ -1,0 +1,28 @@
+name: Snapshot Automatique Minuit
+
+on:
+  schedule:
+    # S'exécute tous les jours à 23:15 UTC (soit 00h15 ou 01h15 en France selon l'heure d'été/hiver)
+    - cron: '15 23 * * *'
+  workflow_dispatch: # Permet de le tester manuellement en un clic sur GitHub
+
+jobs:
+  take-snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Installer les dépendances nécessaires
+        run: pip install pandas supabase
+
+      - name: Lancer le script de capture
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python take_snapshot.py
