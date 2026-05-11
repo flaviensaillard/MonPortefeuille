@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import re
 from supabase import create_client, Client
 
 @st.cache_resource
@@ -66,15 +67,24 @@ def append_to_sheet(table_name, new_row_dict):
         load_sheet.clear()
     except Exception as e:
         st.error(f"⚠️ Erreur d'ajout sur la table {table_name}: {e}")
+
 def obtenir_derniere_projection_veille():
     """
     Récupère l'avant-dernière ou la dernière ligne de la table Projections
     pour servir de point de comparaison J-1 (veille).
     """
+    def _extraire_nombre_local(valeur):
+        """Fonction utilitaire interne pour éviter les imports circulaires."""
+        if pd.isna(valeur) or valeur is None:
+            return 0.0
+        val_str = str(valeur).replace(" ", "").replace("\xa0", "").replace(",", ".").strip()
+        match = re.search(r'([-+]?\d*\.?\d+)', val_str)
+        return float(match.group(1)) if match else 0.0
+
     try:
         # On charge la feuille Projections
         df_proj = load_sheet("Projections", [])
-        if df_proj.empty:
+        if df_proj is None or df_proj.empty:
             return None
         
         # On s'assure du bon tri par date
@@ -84,9 +94,14 @@ def obtenir_derniere_projection_veille():
         if not df_proj.empty:
             # On extrait la toute dernière ligne enregistrée (la photo du robot de minuit)
             derniere_ligne = df_proj.iloc[-1]
+            
+            # Récupération sécurisée et typée des valeurs numériques
+            tg_brut = derniere_ligne.get("Total Global", 0.0)
+            strat_brut = derniere_ligne.get("Actifs Stratégiques", 0.0)
+            
             return {
-                "Total Global": float(derniere_ligne.get("Total Global", 0.0)),
-                "Actifs Stratégiques": float(derniere_ligne.get("Actifs Stratégiques", 0.0))
+                "Total Global": _extraire_nombre_local(tg_brut),
+                "Actifs Stratégiques": _extraire_nombre_local(strat_brut)
             }
     except Exception as e:
         print(f"Erreur lors de la lecture J-1 : {e}")
