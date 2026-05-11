@@ -1,77 +1,63 @@
 import os
+import datetime
 import pandas as pd
-import yfinance as yf
-from supabase import create_client
+# On importe tes fonctions de connexion à la base de données depuis ton code existant
+# (Adapte l'import selon l'endroit où sont définies tes fonctions de lecture/écriture)
+from app import read_sheet, save_sheet, extraire_nombre
 
-# Connexion à Supabase via les Secrets de ton GitHub
-url = os.environ.get("SUPABASE_URL")
-key = os.environ.get("SUPABASE_KEY")
-supabase = create_client(url, key)
-
-def run_robot():
-    # 1. Récupérer les données des actifs actuels
-    response = supabase.table("Donnees").select("*").execute()
-    df = pd.DataFrame(response.data)
+def run_daily_projection():
+    print(f"🤖 Lancement du robot de projection - {datetime.datetime.now()}")
     
-    if df.empty:
-        print("Aucune donnée trouvée dans la table Donnees.")
+    # 1. Récupération des données actuelles du portefeuille
+    try:
+        df_donnees = read_sheet("Données") # Ou le nom exact de ta table contenant le bilan actuel
+    except Exception as e:
+        print(f"❌ Erreur lors de la lecture des données actuelles : {e}")
         return
 
+    if df_donnees.empty:
+        print("⚠️ La table des données actuelles est vide. Annulation.")
+        return
+
+    # 2. Extraction des valeurs "Total Global" et "Actifs Stratégiques"
+    # (Le code ci-dessous mime la logique d'extraction de ton app.py)
     total_global = 0.0
-    actifs_strategiques = 0.0
-    capital_investi = 0.0
+    actifs_strat = 0.0
 
-    # 2. Calculer les valeurs en direct et le capital investi
-    for _, row in df.iterrows():
-        ticker = str(row['Ticker']).strip()
-        quantite = float(row.get('Quantité', 0.0))
+    for _, row in df_donnees.iterrows():
+        classe = str(row.get("Classe d'actif", "")).strip()
+        valeur_totale = extraire_nombre(row.get("Valeur totale", "0"))
         
-        # Récupération du Prix d'Achat (PAF) pour le Capital Investi
-        # (J'utilise .get() avec des alternatives courantes pour le nom de ta colonne d'achat)
-        paf = float(row.get('PAF', row.get('Prix d achat', row.get('Prix d\'achat', 0.0))))
-        capital_investi += paf * quantite
-        
-        # Récupération du cours actuel (Yahoo Finance)
-        if ticker in ["EUR", "USD", "CHF", "CNY", "Cash", "Liquidités"]:
-            court_num = 1.0
-        else:
-            ticker_yahoo = ticker.replace("USDT", "-USD") if "USDT" in ticker else ticker
-            try:
-                data = yf.Ticker(ticker_yahoo).history(period="1d")
-                if not data.empty:
-                    court_num = float(data['Close'].iloc[-1])
-                    # Mise à jour du cours actuel dans la table Donnees
-                    supabase.table("Donnees").update({"Court Num": court_num}).eq("Ticker", ticker).execute()
-                else:
-                    court_num = float(row.get('Court Num', 0.0))
-            except Exception:
-                court_num = float(row.get('Court Num', 0.0))
+        if "Total" in classe or "Global" in classe:
+            total_global = valeur_totale
+        elif "Stratégique" in classe:
+            actifs_strat = valeur_totale
 
-        valeur_actuelle_ligne = court_num * quantite
-        total_global += valeur_actuelle_ligne
-        
-        # Si ce n'est pas du cash, c'est un actif stratégique
-        if ticker not in ["EUR", "USD", "CHF", "CNY", "Cash", "Liquidités"]:
-            actifs_strategiques += valeur_actuelle_ligne
+    # Si les libellés exacts dépendent de ta structure, on s'assure d'avoir des chiffres cohérents
+    print(f"📊 Valeurs détectées : Total Global = {total_global} $ | Actifs Stratégiques = {actifs_strat} $")
 
-    # 3. Enregistrer la ligne dans la table "projections"
-    # On respecte STRICTEMENT tes colonnes : Date, Capital investi, actifs stratégiques, Total global
-    projections_entry = {
-        "Date": pd.Timestamp.now().strftime('%Y-%m-%d'),
-        "Capital investi": round(capital_investi, 2),
-        "actifs stratégiques": round(actifs_strategiques, 2),
-        "Total global": round(total_global, 2)
+    # 3. Récupération et mise à jour de la table "Projections"
+    try:
+        df_projections = read_sheet("Projections")
+    except:
+        df_projections = pd.DataFrame(columns=["Date", "Evolution cumulée $", "Actifs Stratégiques", "Score TWR %"])
+
+    # Nouvelle ligne à insérer
+    nouvelle_ligne = {
+        "Date": datetime.date.today().strftime("%d/%m/%Y"),
+        "Evolution cumulée $": total_global,
+        "Actifs Stratégiques": actifs_strat,
+        "Score TWR %": 0.0 # Optionnel : à recalculer si tu veux alimenter ton TWR automatiquement
     }
 
+    # On ajoute la ligne et on sauvegarde
+    df_projections = pd.concat([df_projections, pd.DataFrame([nouvelle_ligne])], ignore_index=True)
+    
     try:
-        supabase.table("projections").insert(projections_entry).execute()
-        print("✅ Succès ! Ligne enregistrée dans la table 'projections' :")
-        print(f"   - Date : {projections_entry['Date']}")
-        print(f"   - Capital investi : {projections_entry['Capital investi']:.2f} €")
-        print(f"   - Actifs stratégiques : {projections_entry['actifs stratégiques']:.2f} €")
-        print(f"   - Total global : {projections_entry['Total global']:.2f} €")
+        save_sheet("Projections", df_projections)
+        print("✅ Base 'Projections' mise à jour avec succès par le robot !")
     except Exception as e:
-        print(f"❌ Erreur lors de l'écriture dans la table projections : {e}")
+        print(f"❌ Erreur lors de la sauvegarde des projections : {e}")
 
 if __name__ == "__main__":
-    run_robot()
+    run_daily_projection()
