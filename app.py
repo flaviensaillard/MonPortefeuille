@@ -12,7 +12,7 @@ from streamlit_autorefresh import st_autorefresh
 
 # --- IMPORTATION DE L'ARCHITECTURE MODULAIRE ---
 from utils import format_smart, extraire_nombre, nettoyer_dataframe, is_crypto_ticker
-from db_manager import load_sheet, save_sheet, append_to_sheet
+from db_manager import load_sheet, save_sheet, append_to_sheet, obtenir_derniere_projection_veille
 from api_client import recuperer_inflation_france, get_historical_fx, get_historical_usd_rate
 from tax_engine import calcul_frais_km, calcul_impot_ir, get_action_tax_data, get_crypto_tax_data, get_pru_and_qty
 
