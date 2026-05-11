@@ -384,7 +384,7 @@ if page_choisie == "📊 Tableau de bord":
         if val_strat_veille > 0:
             diff_strat_val = val_invest - val_strat_veille
             diff_strat_pct = (diff_strat_val / val_strat_veille) * 100
-            delta_strat_txt = f"{diff_strat_val:+.2f} $ ({diff_strat_pct:+.2f}%) depuis minuit"
+            delta_strat_txt = f"{diff_strat_val:+.2f} $ ({diff_strat_pct:+.2f}%)"
     # =====================================================================
 
     # --- SECTION 2 : TOTAL GLOBAL ---
