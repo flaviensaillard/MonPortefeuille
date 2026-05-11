@@ -1,0 +1,28 @@
+name: Robot Mise à Jour Nocturne
+
+on:
+  schedule:
+    - cron: '0 23 * * *' # Tourne à 23h UTC (minuit ou 1h du matin en France)
+  workflow_dispatch: # Permet de le lancer manuellement pour tester
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas yfinance supabase
+
+      - name: Run robot
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python robot.py
