@@ -2,8 +2,8 @@ name: Snapshot Automatique Minuit
 
 on:
   schedule:
-    # S'exécute tous les jours à 22:00 UTC (soit 00h00 pile en France en heure d'été)
-    - cron: '0 22 * * *'
+    # S'exécute tous les jours à 23:00 UTC (soit 01h00 pile en France en heure d'été)
+    - cron: '0 23 * * *'
   workflow_dispatch: # Permet de le lancer manuellement depuis l'onglet Actions
 
 jobs:
