@@ -36,8 +36,7 @@ def save_sheet(table_name, df):
     try:
         df_clean = df.copy()
         
-        # 🛡️ LA SÉCURITÉ POUR LE ROBOT EST ICI :
-        # Si on essaie de sauvegarder la table "Donnees", on vérifie les prix.
+        # 🛡️ SÉCURITÉ POUR LE ROBOT :
         # S'il manque des prix (NaN), on supprime la ligne vide au lieu d'écrire un zéro.
         if table_name == "Donnees" and "Court Num" in df_clean.columns:
             df_clean = df_clean.dropna(subset=["Court Num"])
@@ -46,7 +45,6 @@ def save_sheet(table_name, df):
         df_clean = df_clean.replace([np.inf, -np.inf], np.nan).fillna(0.0)
         
         # On ne lance la sauvegarde QUE s'il reste des données valides.
-        # Si le fichier est vide (parce que Yahoo a planté), on ne fait rien, ce qui protège vos données !
         if not df_clean.empty:
             supabase.table(table_name).delete().neq("id", -1).execute()
             records = df_clean.to_dict('records')
@@ -81,23 +79,19 @@ def obtenir_derniere_projection_veille():
         return float(match.group(1)) if match else 0.0
 
     try:
-        # On charge la feuille Projections
         df_proj = load_sheet("Projections", [])
         if df_proj is None or df_proj.empty:
             return None
         
         df_proj = df_proj.copy()
         
-        # 🔥 CORRECTION ICI : On nettoie la date (on ne garde que les 10 premiers caractères JJ/MM/AAAA)
-        # pour éviter que les heures des saisies manuelles/tests ne fassent planter le tri
+        # Nettoyage robuste de la date pour éviter le crash des saisies manuelles
         df_proj['Date_Propre'] = df_proj['Date'].astype(str).str.slice(0, 10)
-        
-        # On s'assure du bon tri par date
         df_proj["Date_Parsed"] = pd.to_datetime(df_proj["Date_Propre"], dayfirst=True, errors="coerce")
         df_proj = df_proj.dropna(subset=["Date_Parsed"]).sort_values("Date_Parsed")
         
         if not df_proj.empty:
-            # On extrait la toute dernière ligne enregistrée
+            # On extrait la toute dernière ligne enregistrée (la veille réelle disponible)
             derniere_ligne = df_proj.iloc[-1]
             
             return {
@@ -107,3 +101,51 @@ def obtenir_derniere_projection_veille():
     except Exception as e:
         print(f"Erreur lors de la lecture J-1 : {e}")
     return None
+
+def recalculer_toute_la_base_projections(df):
+    """
+    Prend les données brutes de Supabase et recalcule proprement 
+    l'évolution ligne par ligne par rapport à la date CHRONOLOGIQUE précédente.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+        
+    df = df.copy()
+    
+    # 1. Nettoyage et conversion des dates pour un tri chronologique parfait
+    df['Date_Propre'] = df['Date'].astype(str).str.slice(0, 10)
+    df['Date_DT'] = pd.to_datetime(df['Date_Propre'], dayfirst=True, errors='coerce')
+    
+    # On trie du plus ANCIEN au plus RÉCENT pour pouvoir faire le calcul différentiel (.diff())
+    df = df.dropna(subset=['Date_DT']).sort_values('Date_DT').reset_index(drop=True)
+    
+    # 2. Sécurisation numérique de toutes les colonnes clés
+    for col in ['Capital investi', 'Actifs Stratégiques', 'Total Global']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce').fillna(0.0)
+
+    # 3. CALCULS DES ÉVOLUTIONS (Basés STRICTEMENT sur la ligne de la date précédente)
+    # .diff() calcule la différence exacte avec la ligne juste au-dessus
+    df['Evolution actifs $'] = df['Actifs Stratégiques'].diff().fillna(0.0)
+    
+    # Évolution en % par rapport à la valeur précédente des actifs stratégiques
+    val_precedente_strat = df['Actifs Stratégiques'].shift(1)
+    df['Evolution actifs %'] = (df['Evolution actifs $'] / val_precedente_strat * 100).fillna(0.0)
+    
+    # Évolutions cumulées (depuis le capital investi de base)
+    df['Evolution cumulée $'] = df['Actifs Stratégiques'] - df['Capital investi']
+    df['Evolution cumulée %'] = ((df['Actifs Stratégiques'] - df['Capital investi']) / df['Capital investi'] * 100).fillna(0.0)
+    
+    # Calculs pour le Total Global
+    df['TG_Evolution cumulée $'] = df['Total Global'] - df['Capital investi']
+    df['TG_Evolution cumulée %'] = ((df['Total Global'] - df['Capital investi']) / df['Capital investi'] * 100).fillna(0.0)
+    
+    # 4. CALCULS DES SCORES TWR 
+    # Formules par défaut alignées avec vos évolutions cumulées
+    df['Score TWR %'] = df['Evolution cumulée %']
+    df['TG_Score TWR %'] = df['TG_Evolution cumulée %']
+
+    # On supprime les colonnes de travail temporaires
+    df = df.drop(columns=['Date_Propre', 'Date_DT'])
+    
+    return df
