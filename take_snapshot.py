@@ -6,6 +6,7 @@ from supabase import create_client
 def extraire_nombre(val):
     if pd.isna(val) or val is None:
         return 0.0
+    # Nettoyage complet des caractères de devises et espaces
     val_str = str(val).replace(" ", "").replace("\xa0", "").replace(",", ".").replace("€", "").replace("$", "")
     try:
         return float(val_str)
@@ -13,67 +14,63 @@ def extraire_nombre(val):
         return 0.0
 
 def run_snapshot():
-    # 1. Connexion à Supabase via les variables d'environnement de GitHub
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_KEY")
-    
     if not url or not key:
-        print("❌ Erreur : Variables d'environnement SUPABASE_URL ou SUPABASE_KEY manquantes.")
+        print("❌ Erreur : Variables URL ou KEY manquantes.")
         return
         
     supabase = create_client(url, key)
     
-    # 2. Récupération des données actuelles dans la table "Données"
-    try:
-        response = supabase.table("Données").select("*").execute()
-        df_donnees = pd.DataFrame(response.data)
-    except Exception as e:
-        print(f"❌ Impossible de lire la table 'Données' : {e}")
-        return
-
-    if df_donnees.empty:
-        print("⚠️ La table 'Données' est vide. Annulation.")
-        return
-
-    # 3. Extraction de "Total global" et "Actifs stratégiques" depuis la table "Données"
+    # 1. 📈 CALCUL DU TOTAL GLOBAL ET STRATÉGIQUE DEPUIS LA TABLE "Donnees"
     total_global = 0.0
     actifs_strat = 0.0
-
-    for _, row in df_donnees.iterrows():
-        classe = str(row.get("Classe d'actif", "")).strip()
-        valeur_totale = extraire_nombre(row.get("Valeur totale", "0"))
+    
+    try:
+        response = supabase.table("Donnees").select("*").execute()
+        df_donnees = pd.DataFrame(response.data)
         
-        # 🛡️ Correction du bug historique : "class_name" remplacé par "classe"
-        if "Total" in classe or "Global" in classe:
-            total_global = valeur_totale
-        elif "Stratégique" in classe:
-            actifs_strat = valeur_totale
+        if not df_donnees.empty:
+            for _, row in df_donnees.iterrows():
+                quantite = extraire_nombre(row.get("Quantité", 0.0))
+                court = extraire_nombre(row.get("Court", 0.0))
+                pourcentage = extraire_nombre(row.get("Pourcentage", 0.0))
+                
+                # Valeur en direct de la ligne d'actif
+                valeur_ligne = quantite * court
+                
+                # Le global cumule absolument tout
+                total_global += valeur_ligne
+                
+                # Le stratégique prend uniquement si le pourcentage est défini (différent de 0)
+                if pourcentage != 0.0:
+                    actifs_strat += valeur_ligne
+                    
+            print(f"🔄 Calculs Données : Global = {total_global} $ | Stratégique = {actifs_strat} $")
+    except Exception as e:
+        print(f"❌ Erreur lors du calcul des totaux en direct : {e}")
+        return
 
-    # 4. 🛠️ Récupération de la valeur la plus récente de "Total_Apports_nets" dans "Historique"
+    # 2. 💰 RÉCUPÉRATION DU CAPITAL DEPUIS L'HISTORIQUE
     capital_investi = 0.0
     try:
-        response_hist = supabase.table("Historique").select("*").execute()
+        response_hist = supabase.table("Historique").select("Total_Apports_nets").execute()
         df_hist = pd.DataFrame(response_hist.data)
         
         if not df_hist.empty and "Total_Apports_nets" in df_hist.columns:
-            # On récupère la toute dernière ligne enregistrée dans la table
-            derniere_ligne = df_hist.iloc[-1]
-            capital_investi = extraire_nombre(derniere_ligne.get("Total_Apports_nets", 0.0))
-            print(f"💰 Capital récupéré depuis l'Historique (Total_Apports_nets) : {capital_investi} $")
+            # On prend la toute dernière valeur enregistrée dans l'historique
+            capital_investi = extraire_nombre(df_hist["Total_Apports_nets"].iloc[-1])
+            print(f"💰 Capital récupéré depuis l'Historique : {capital_investi} $")
         else:
-            # Sécurité si la table est vide ou si la colonne n'est pas encore lue
-            print("⚠️ Colonne 'Total_Apports_nets' introuvable dans l'Historique. Recherche du dernier Capital connu dans Projections...")
+            print("⚠️ Colonne 'Total_Apports_nets' introuvable. Récupération du dernier capital connu...")
             last_p = supabase.table("Projections").select("Capital investi").order("Date", desc=True).limit(1).execute()
             if last_p.data:
                 capital_investi = extraire_nombre(last_p.data[0].get("Capital investi", 0.0))
     except Exception as e:
-        print(f"⚠️ Erreur lors de la lecture du Capital depuis l'Historique : {e}")
+        print(f"⚠️ Erreur lors de la lecture du Capital : {e}")
 
-    print(f"📸 Valeurs lues : Global = {total_global} | Stratégique = {actifs_strat} | Capital = {capital_investi}")
-
-    # 5. Écriture de la photo dans la table "Projections"
+    # 3. 📸 ÉCRITURE DE LA PHOTO DANS LA TABLE "Projections"
     date_aujourdhui = datetime.date.today().strftime("%d/%m/%Y")
-    
     nouvelle_photo = {
         "Date": date_aujourdhui,
         "Total global": total_global,
@@ -82,16 +79,16 @@ def run_snapshot():
     }
 
     try:
-        # On vérifie si une photo existe déjà pour aujourd'hui pour éviter les doublons
+        # Évite les doublons si le script tourne deux fois le même jour
         check = supabase.table("Projections").select("*").eq("Date", date_aujourdhui).execute()
         if len(check.data) > 0:
             print(f"ℹ️ Une photo existe déjà pour le {date_aujourdhui}. Pas d'écriture.")
             return
             
         supabase.table("Projections").insert(nouvelle_photo).execute()
-        print(f"✅ Photo du {date_aujourdhui} enregistrée avec succès !")
+        print(f"✅ Photo du {date_aujourdhui} enregistrée automatiquement avec succès !")
     except Exception as e:
-        print(f"❌ Erreur lors de l'enregistrement de la photo : {e}")
+        print(f"❌ Erreur lors de l'enregistrement dans Projections : {e}")
 
 if __name__ == "__main__":
     run_snapshot()
