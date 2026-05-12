@@ -74,7 +74,7 @@ def run_snapshot():
     nouvelle_photo = {
         "Date": date_aujourdhui,
         "Total global": total_global,
-        "Actifs stratégiques": actifs_strat,
+        "Actifs Stratégiques": actifs_strat,
         "Capital investi": capital_investi
     }
 
