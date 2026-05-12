@@ -70,11 +70,10 @@ def append_to_sheet(table_name, new_row_dict):
 
 def obtenir_derniere_projection_veille():
     """
-    Récupère l'avant-dernière ou la dernière ligne de la table Projections
+    Récupère la dernière ligne valide de la table Projections
     pour servir de point de comparaison J-1 (veille).
     """
     def _extraire_nombre_local(valeur):
-        """Fonction utilitaire interne pour éviter les imports circulaires."""
         if pd.isna(valeur) or valeur is None:
             return 0.0
         val_str = str(valeur).replace(" ", "").replace("\xa0", "").replace(",", ".").strip()
@@ -87,21 +86,23 @@ def obtenir_derniere_projection_veille():
         if df_proj is None or df_proj.empty:
             return None
         
+        df_proj = df_proj.copy()
+        
+        # 🔥 CORRECTION ICI : On nettoie la date (on ne garde que les 10 premiers caractères JJ/MM/AAAA)
+        # pour éviter que les heures des saisies manuelles/tests ne fassent planter le tri
+        df_proj['Date_Propre'] = df_proj['Date'].astype(str).str.slice(0, 10)
+        
         # On s'assure du bon tri par date
-        df_proj["Date_Parsed"] = pd.to_datetime(df_proj["Date"], dayfirst=True, errors="coerce")
+        df_proj["Date_Parsed"] = pd.to_datetime(df_proj["Date_Propre"], dayfirst=True, errors="coerce")
         df_proj = df_proj.dropna(subset=["Date_Parsed"]).sort_values("Date_Parsed")
         
         if not df_proj.empty:
-            # On extrait la toute dernière ligne enregistrée (la photo du robot de minuit)
+            # On extrait la toute dernière ligne enregistrée
             derniere_ligne = df_proj.iloc[-1]
             
-            # Récupération sécurisée et typée des valeurs numériques
-            tg_brut = derniere_ligne.get("Total Global", 0.0)
-            strat_brut = derniere_ligne.get("Actifs Stratégiques", 0.0)
-            
             return {
-                "Total Global": _extraire_nombre_local(tg_brut),
-                "Actifs Stratégiques": _extraire_nombre_local(strat_brut)
+                "Total Global": _extraire_nombre_local(derniere_ligne.get("Total Global", 0.0)),
+                "Actifs Stratégiques": _extraire_nombre_local(derniere_ligne.get("Actifs Stratégiques", 0.0))
             }
     except Exception as e:
         print(f"Erreur lors de la lecture J-1 : {e}")
