@@ -674,19 +674,27 @@ elif page_choisie == "🏖️ Suivi":
     if not st.session_state.projections.empty:
         df_v = st.session_state.projections.copy()
         
-        # 1. On crée la colonne temporelle pour un tri parfait
-        df_v['DT'] = pd.to_datetime(df_v['Date'], dayfirst=True, errors='coerce')
+        # 1. NETTOYAGE : On extrait uniquement les 10 premiers caractères (JJ/MM/AAAA) 
+        # pour ignorer les heures/minutes/secondes qui font planter Python
+        df_v['Date_Propre'] = df_v['Date'].astype(str).str.slice(0, 10)
         
-        # 2. On trie IMMÉDIATEMENT du plus récent au plus ancien
-        df_v = df_v.dropna(subset=['DT']).sort_values('DT', ascending=False)
+        # 2. CONVERSION : On convertit en vraie date pour le tri
+        df_v['DT'] = pd.to_datetime(df_v['Date_Propre'], dayfirst=True, errors='coerce')
         
-        # 3. On uniformise l'affichage de la date (on enlève l'heure pour l'esthétique)
+        # Si jamais une date fait encore de la résistance, on garde quand même la ligne
+        # en lui donnant la date du jour pour ne pas perdre tes données financières !
+        df_v['DT'] = df_v['DT'].fillna(pd.Timestamp.now())
+        
+        # 3. TRI : Un tri parfait du plus récent au plus ancien
+        df_v = df_v.sort_values('DT', ascending=False)
+        
+        # 4. HARMONISATION : On réécrit proprement la colonne Date pour l'écran
         df_v['Date'] = df_v['DT'].dt.strftime('%d/%m/%Y')
         
-        # 4. On supprime la colonne technique 'DT' maintenant que le tri est fait
-        df_v = df_v.drop(columns=['DT'])
+        # 5. NETTOYAGE DES COLONNES TECHNIQUES
+        df_v = df_v.drop(columns=['DT', 'Date_Propre'])
         
-        # 5. On applique tes formats intelligents (sur les données bien triées)
+        # 6. FORMATAGE FINANCIER (Inchangé)
         for c in ["Capital investi", "Actifs Stratégiques", "Total Global", "Evolution actifs $", "Evolution cumulée $", "TG_Evolution cumulée $"]:
             if c in df_v.columns:
                 df_v[c] = df_v[c].apply(lambda x: format_smart(x, "$", force_sign=("Evolution" in c)))
@@ -695,7 +703,7 @@ elif page_choisie == "🏖️ Suivi":
             if c in df_v.columns:
                 df_v[c] = df_v[c].apply(lambda x: format_smart(x, "%", force_sign=True))
         
-        # 6. Affichage final avec tes cadenas de protection 🔒
+        # 7. AFFICHAGE FINALE 🔒
         st.dataframe(
             df_v, 
             column_config={c: st.column_config.TextColumn(c + " 🔒") for c in df_v.columns}, 
