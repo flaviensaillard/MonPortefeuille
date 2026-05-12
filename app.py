@@ -672,11 +672,36 @@ elif page_choisie == "💰 Fonds":
 elif page_choisie == "🏖️ Suivi":
     st.title("🏖️ Suivi & Évolution")
     if not st.session_state.projections.empty:
-        df_v = st.session_state.projections.copy(); df_v['DT'] = pd.to_datetime(df_v['Date'], dayfirst=True, errors='coerce')
-        for c in ["Capital investi", "Actifs Stratégiques", "Total Global", "Evolution actifs $", "Evolution cumulée $", "TG_Evolution cumulée $"]: df_v[c] = df_v[c].apply(lambda x: format_smart(x, "$", force_sign=("Evolution" in c)))
-        for c in ["Evolution actifs %", "Evolution cumulée %", "Score TWR %", "TG_Evolution cumulée %", "TG_Score TWR %"]: df_v[c] = df_v[c].apply(lambda x: format_smart(x, "%", force_sign=True))
-        st.dataframe(df_v.sort_values('DT', ascending=False).drop(columns=['DT']), column_config={c: st.column_config.TextColumn(c + " 🔒") for c in df_v.columns if c != 'DT'}, use_container_width=True, hide_index=True)
-
+        df_v = st.session_state.projections.copy()
+        
+        # 1. On crée la colonne temporelle pour un tri parfait
+        df_v['DT'] = pd.to_datetime(df_v['Date'], dayfirst=True, errors='coerce')
+        
+        # 2. On trie IMMÉDIATEMENT du plus récent au plus ancien
+        df_v = df_v.dropna(subset=['DT']).sort_values('DT', ascending=False)
+        
+        # 3. On uniformise l'affichage de la date (on enlève l'heure pour l'esthétique)
+        df_v['Date'] = df_v['DT'].dt.strftime('%d/%m/%Y')
+        
+        # 4. On supprime la colonne technique 'DT' maintenant que le tri est fait
+        df_v = df_v.drop(columns=['DT'])
+        
+        # 5. On applique tes formats intelligents (sur les données bien triées)
+        for c in ["Capital investi", "Actifs Stratégiques", "Total Global", "Evolution actifs $", "Evolution cumulée $", "TG_Evolution cumulée $"]:
+            if c in df_v.columns:
+                df_v[c] = df_v[c].apply(lambda x: format_smart(x, "$", force_sign=("Evolution" in c)))
+                
+        for c in ["Evolution actifs %", "Evolution cumulée %", "Score TWR %", "TG_Evolution cumulée %", "TG_Score TWR %"]:
+            if c in df_v.columns:
+                df_v[c] = df_v[c].apply(lambda x: format_smart(x, "%", force_sign=True))
+        
+        # 6. Affichage final avec tes cadenas de protection 🔒
+        st.dataframe(
+            df_v, 
+            column_config={c: st.column_config.TextColumn(c + " 🔒") for c in df_v.columns}, 
+            use_container_width=True, 
+            hide_index=True
+        )
 elif page_choisie == "📈 Performance":
     st.title("📈 Performances Annuelles & Inflation")
     df_p = st.session_state.projections
