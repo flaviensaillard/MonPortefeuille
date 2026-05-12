@@ -72,10 +72,10 @@ def run_snapshot():
 # 3. 📸 ÉCRITURE DE LA PHOTO DANS LA TABLE "Projections"
     date_aujourdhui = datetime.date.today().strftime("%d/%m/%Y")
     
-    # 🛠️ CORRECTION APPLIQUÉE : "Actifs Stratégiques" avec les deux majuscules et l'accent
+    # 🛠️ CORRECTION APPLIQUÉE : "Total Global" et "Actifs Stratégiques" avec les bonnes majuscules
     nouvelle_photo = {
         "Date": date_aujourdhui,
-        "Total global": total_global,
+        "Total Global": total_global,
         "Actifs Stratégiques": actifs_strat,
         "Capital investi": capital_investi
     }
