@@ -69,7 +69,7 @@ def run_snapshot():
     except Exception as e:
         print(f"⚠️ Erreur lors de la lecture du Capital : {e}")
 
-    # 3. 📸 ÉCRITURE DE LA PHOTO DANS LA TABLE "Projections"
+# 3. 📸 ÉCRITURE DE LA PHOTO DANS LA TABLE "Projections"
     date_aujourdhui = datetime.date.today().strftime("%d/%m/%Y")
     nouvelle_photo = {
         "Date": date_aujourdhui,
@@ -79,14 +79,9 @@ def run_snapshot():
     }
 
     try:
-        # Évite les doublons si le script tourne deux fois le même jour
-        check = supabase.table("Projections").select("*").eq("Date", date_aujourdhui).execute()
-        if len(check.data) > 0:
-            print(f"ℹ️ Une photo existe déjà pour le {date_aujourdhui}. Pas d'écriture.")
-            return
-            
+        # 🛠️ ON FORCE L'INSERTION POUR LE TEST (Sécurité doublon désactivée)
         supabase.table("Projections").insert(nouvelle_photo).execute()
-        print(f"✅ Photo du {date_aujourdhui} enregistrée automatiquement avec succès !")
+        print(f"✅ TEST REUSSI : Photo du {date_aujourdhui} enregistrée avec succès !")
     except Exception as e:
         print(f"❌ Erreur lors de l'enregistrement dans Projections : {e}")
 
