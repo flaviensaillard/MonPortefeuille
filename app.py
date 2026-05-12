@@ -37,8 +37,13 @@ FISCAL_DB = {
     2025: {"tax_lim_1": 11750.0, "tax_lim_2": 29957.0, "tax_lim_3": 85664.0, "tax_lim_4": 184261.0, "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45, "decote_lim_cel": 2083.0, "decote_base_cel": 943.0, "decote_lim_mar": 3432.0, "decote_base_mar": 1553.0, "tax_pfu": 30.0, "tax_ps": 17.2, "frais_repas": 5.50}
 }
 
-try: TAX_EUR_USD = float(yf.Ticker("EURUSD=X").history(period="1d")['Close'].iloc[-1])
-except: TAX_EUR_USD = 1.05 
+try: 
+    TAX_EUR_USD = float(yf.Ticker("EURUSD=X").history(period="1d")['Close'].iloc[-1])
+except: 
+    TAX_EUR_USD = 1.05 
+
+# 🛡️ Sécurité anti-crash : on crée un alias pour que les deux orthographes fonctionnent !
+TAUX_EUR_USD = TAX_EUR_USD 
 
 # --- 2. SÉCURITÉ ---
 def check_password():
