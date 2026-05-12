@@ -35,26 +35,43 @@ def run_snapshot():
         print("⚠️ La table 'Données' est vide. Annulation.")
         return
 
-    # 3. Extraction des 3 valeurs cibles
+    # 3. Extraction de "Total global" et "Actifs stratégiques" depuis la table "Données"
     total_global = 0.0
     actifs_strat = 0.0
-    capital_investi = 0.0
 
     for _, row in df_donnees.iterrows():
         classe = str(row.get("Classe d'actif", "")).strip()
         valeur_totale = extraire_nombre(row.get("Valeur totale", "0"))
         
-        # Identification des lignes (ajuste les noms si tes colonnes diffèrent légèrement)
-        if "Total" in class_name or "Global" in classe:
+        # 🛡️ Correction du bug historique : "class_name" remplacé par "classe"
+        if "Total" in classe or "Global" in classe:
             total_global = valeur_totale
         elif "Stratégique" in classe:
             actifs_strat = valeur_totale
-        elif "Capital" in classe or "Investi" in classe:
-            capital_investi = valeur_totale
+
+    # 4. 🛠️ Récupération de la valeur la plus récente de "Total_Apports_nets" dans "Historique"
+    capital_investi = 0.0
+    try:
+        response_hist = supabase.table("Historique").select("*").execute()
+        df_hist = pd.DataFrame(response_hist.data)
+        
+        if not df_hist.empty and "Total_Apports_nets" in df_hist.columns:
+            # On récupère la toute dernière ligne enregistrée dans la table
+            derniere_ligne = df_hist.iloc[-1]
+            capital_investi = extraire_nombre(derniere_ligne.get("Total_Apports_nets", 0.0))
+            print(f"💰 Capital récupéré depuis l'Historique (Total_Apports_nets) : {capital_investi} $")
+        else:
+            # Sécurité si la table est vide ou si la colonne n'est pas encore lue
+            print("⚠️ Colonne 'Total_Apports_nets' introuvable dans l'Historique. Recherche du dernier Capital connu dans Projections...")
+            last_p = supabase.table("Projections").select("Capital investi").order("Date", desc=True).limit(1).execute()
+            if last_p.data:
+                capital_investi = extraire_nombre(last_p.data[0].get("Capital investi", 0.0))
+    except Exception as e:
+        print(f"⚠️ Erreur lors de la lecture du Capital depuis l'Historique : {e}")
 
     print(f"📸 Valeurs lues : Global = {total_global} | Stratégique = {actifs_strat} | Capital = {capital_investi}")
 
-    # 4. Écriture de la photo dans la table "Projections"
+    # 5. Écriture de la photo dans la table "Projections"
     date_aujourdhui = datetime.date.today().strftime("%d/%m/%Y")
     
     nouvelle_photo = {
