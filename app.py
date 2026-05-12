@@ -613,7 +613,21 @@ elif page_choisie == "💰 Fonds":
                 try:
                     o_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
                     m_usd = m_s if d_s == "$" else m_s * TAUX_EUR_USD; m_eur = m_s if d_s == "€" else m_s / TAUX_EUR_USD
-                    nl = {"Date": d_m.strftime("%d/%m/%Y"), "Type": t_m, "Montant $": m_usd, "Montant €": m_eur, "Montant Or": m_usd/o_px}
+                    
+                    # 🛠️ CALCUL DU NOUVEAU TOTAL DES APPORTS NETS FISCAL
+                    ancien_total = sum(r["Montant $"] if "ajout" in r["Type"].lower() else -r["Montant $"] for _, r in st.session_state.historique.iterrows())
+                    nouveau_total = ancien_total + (m_usd if t_m == "Ajout de fond propre" else -m_usd)
+                    
+                    # 🛠️ INCLUSION DE LA COLONNE EXACTE POUR SUPABASE
+                    nl = {
+                        "Date": d_m.strftime("%d/%m/%Y"), 
+                        "Type": t_m, 
+                        "Montant $": m_usd, 
+                        "Montant €": m_eur, 
+                        "Montant Or": m_usd/o_px,
+                        "Total_Apports_nets": nouveau_total
+                    }
+                    
                     append_to_sheet("Historique", nl)
                     st.session_state.historique = pd.concat([st.session_state.historique, pd.DataFrame([nl])], ignore_index=True)
                     
@@ -632,9 +646,11 @@ elif page_choisie == "💰 Fonds":
     afficher_montant_double("Total Apports nets", sum(r["Montant $"] if "ajout" in r["Type"].lower() else -r["Montant $"] for _, r in st.session_state.historique.iterrows()))
     if not st.session_state.historique.empty:
         d_v = st.session_state.historique.copy(); d_v.columns = [f"{c} 🔒" for c in d_v.columns]; d_v['DT'] = pd.to_datetime(d_v['Date 🔒'], dayfirst=True, errors='coerce')
-        for c, s in [("Montant $ 🔒", "$"), ("Montant € 🔒", "€"), ("Montant Or 🔒", "oz")]: d_v[c] = d_v[c].apply(lambda x: format_smart(x, s))
+        for c, s in [("Montant $ 🔒", "$"), ("Montant € 🔒", "€"), ("Montant Or 🔒", "oz")]: 
+            if c in d_v.columns:
+                d_v[c] = d_v[c].apply(lambda x: format_smart(x, s))
         st.dataframe(d_v.sort_values('DT', ascending=False).drop(columns=['DT']), use_container_width=True, hide_index=True)
-
+        
 elif page_choisie == "🏖️ Suivi":
     st.title("🏖️ Suivi & Évolution")
     if not st.session_state.projections.empty:
