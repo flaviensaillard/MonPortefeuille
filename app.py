@@ -12,7 +12,8 @@ from streamlit_autorefresh import st_autorefresh
 
 # --- IMPORTATION DE L'ARCHITECTURE MODULAIRE ---
 from utils import format_smart, extraire_nombre, nettoyer_dataframe, is_crypto_ticker
-from db_manager import load_sheet, save_sheet, append_to_sheet, obtenir_derniere_projection_veille
+# 🔥 CORRECTION : On importe ici la fonction de calcul robuste qui vient de db_manager
+from db_manager import load_sheet, save_sheet, append_to_sheet, obtenir_derniere_projection_veille, recalculer_toute_la_base_projections
 from api_client import recuperer_inflation_france, get_historical_fx, get_historical_usd_rate
 from tax_engine import calcul_frais_km, calcul_impot_ir, get_action_tax_data, get_crypto_tax_data, get_pru_and_qty
 
@@ -36,8 +37,8 @@ FISCAL_DB = {
     2025: {"tax_lim_1": 11750.0, "tax_lim_2": 29957.0, "tax_lim_3": 85664.0, "tax_lim_4": 184261.0, "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45, "decote_lim_cel": 2083.0, "decote_base_cel": 943.0, "decote_lim_mar": 3432.0, "decote_base_mar": 1553.0, "tax_pfu": 30.0, "tax_ps": 17.2, "frais_repas": 5.50}
 }
 
-try: TAUX_EUR_USD = float(yf.Ticker("EURUSD=X").history(period="1d")['Close'].iloc[-1])
-except: TAUX_EUR_USD = 1.05 
+try: TAX_EUR_USD = float(yf.Ticker("EURUSD=X").history(period="1d")['Close'].iloc[-1])
+except: TAX_EUR_USD = 1.05 
 
 # --- 2. SÉCURITÉ ---
 def check_password():
@@ -57,52 +58,12 @@ if not check_password(): st.stop()
 
 # --- 3. FONCTIONS CONTROLEUR ---
 def afficher_montant_double(label, montant_usd, delta_str="", couleur_valeur=None, taille="large"):
-    montant_eur = montant_usd / TAUX_EUR_USD
+    montant_eur = montant_usd / TAX_EUR_USD
     s_usd, s_eur = format_smart(montant_usd), format_smart(montant_eur)
     delta_html = f"<div style='font-size: 0.9rem; font-weight: 600; color: {'#2ecc71' if '+' in delta_str else ('#e74c3c' if '-' in delta_str else 'inherit')}; padding-top: 0.2rem;'>{delta_str}</div>" if delta_str else ""
     t_val, t_lbl = ("1.8rem", "0.9rem") if taille == "large" else ("1.4rem", "0.85rem") if taille == "medium" else ("1.2rem", "0.85rem")
     c_val = f"color: {couleur_valeur};" if couleur_valeur else ""
     st.markdown(f"""<div style="margin-bottom: 0.8rem;"><div style="font-size: {t_lbl}; opacity: 0.8; margin-bottom: 0.2rem;">{label}</div><div style="font-size: {t_val}; font-weight: 600; line-height: 1.2; {c_val}">{s_usd} $ <span style="font-size: 0.65em; opacity: 0.7; font-weight: 400;">/ {s_eur} €</span></div>{delta_html}</div>""", unsafe_allow_html=True)
-
-def recalculer_toute_la_base_projections(df):
-    if df is None or df.empty: return df
-    df_t = df.copy()
-    for i, nom in enumerate(["Date", "Capital investi", "Actifs Stratégiques", "Total Global"]):
-        if i < len(df_t.columns): df_t.rename(columns={df_t.columns[i]: nom}, inplace=True)
-    for col in ["Capital investi", "Actifs Stratégiques", "Total Global"]: 
-        df_t[col] = df_t[col].apply(extraire_nombre)
-        
-    df_t['DT_TRI'] = pd.to_datetime(df_t['Date'], dayfirst=True, errors='coerce')
-    df_t = df_t.sort_values('DT_TRI').reset_index(drop=True)
-    
-    df_t["Capital investi Prev"] = df_t["Capital investi"].shift(1).fillna(df_t["Capital investi"])
-    df_t["Actifs Stratégiques Prev"] = df_t["Actifs Stratégiques"].shift(1).fillna(df_t["Actifs Stratégiques"])
-    df_t["Total Global Prev"] = df_t["Total Global"].shift(1).fillna(df_t["Total Global"])
-    df_t["D_Cap"] = df_t["Capital investi"] - df_t["Capital investi Prev"]
-    
-    df_t["Evolution actifs $"] = (df_t["Actifs Stratégiques"] - df_t["Actifs Stratégiques Prev"]) - df_t["D_Cap"]
-    df_t.loc[0, "Evolution actifs $"] = 0.0
-    df_t["Evolution actifs %"] = (df_t["Evolution actifs $"] / df_t["Actifs Stratégiques Prev"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
-    df_t.loc[0, "Evolution actifs %"] = 0.0
-    df_t["Evolution cumulée $"] = df_t["Actifs Stratégiques"] - df_t["Capital investi"]
-    df_t["Evolution cumulée %"] = (df_t["Evolution cumulée $"] / df_t["Capital investi"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
-    
-    base_twr = df_t["Actifs Stratégiques Prev"] + df_t["D_Cap"]
-    df_t["TWR_Fact"] = 1 + (df_t["Evolution actifs $"] / base_twr).replace([np.inf, -np.inf], 0.0).fillna(0.0)
-    df_t.loc[0, "TWR_Fact"] = 1 + (df_t.loc[0, "Evolution cumulée $"] / df_t.loc[0, "Capital investi"] if df_t.loc[0, "Capital investi"] != 0 else 0.0)
-    df_t["Score TWR %"] = (df_t["TWR_Fact"].cumprod() - 1) * 100
-    
-    df_t["Evo_TG"] = (df_t["Total Global"] - df_t["Total Global Prev"]) - df_t["D_Cap"]
-    df_t["TG_Evolution cumulée $"] = df_t["Total Global"] - df_t["Capital investi"]
-    df_t["TG_Evolution cumulée %"] = (df_t["TG_Evolution cumulée $"] / df_t["Capital investi"] * 100).replace([np.inf, -np.inf], 0.0).fillna(0.0)
-    
-    base_tg_twr = df_t["Total Global Prev"] + df_t["D_Cap"]
-    df_t["TG_TWR_Fact"] = 1 + (df_t["Evo_TG"] / base_tg_twr).replace([np.inf, -np.inf], 0.0).fillna(0.0)
-    df_t.loc[0, "TG_TWR_Fact"] = 1 + (df_t.loc[0, "TG_Evolution cumulée $"] / df_t.loc[0, "Capital investi"] if df_t.loc[0, "Capital investi"] != 0 else 0.0)
-    df_t["TG_Score TWR %"] = (df_t["TG_TWR_Fact"].cumprod() - 1) * 100
-    
-    return df_t[["Date", "Capital investi", "Actifs Stratégiques", "Total Global", "Evolution actifs $", "Evolution actifs %", "Evolution cumulée $", "Evolution cumulée %", "Score TWR %", "TG_Evolution cumulée $", "TG_Evolution cumulée %", "TG_Score TWR %"]]
-
 def recalculer_totaux_locaux():
     if "donnees" in st.session_state:
         df = st.session_state.donnees.copy()
