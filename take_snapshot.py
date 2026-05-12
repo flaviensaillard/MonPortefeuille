@@ -6,8 +6,8 @@ from supabase import create_client
 def extraire_nombre(val):
     if pd.isna(val) or val is None:
         return 0.0
-    # Nettoyage complet des caractères de devises et espaces
-    val_str = str(val).replace(" ", "").replace("\xa0", "").replace(",", ".").replace("€", "").replace("$", "")
+    # Nettoyage complet : espaces, devises et le symbole pourcentage
+    val_str = str(val).replace(" ", "").replace("\xa0", "").replace(",", ".").replace("€", "").replace("$", "").replace("%", "")
     try:
         return float(val_str)
     except ValueError:
@@ -34,7 +34,9 @@ def run_snapshot():
             for _, row in df_donnees.iterrows():
                 quantite = extraire_nombre(row.get("Quantité", 0.0))
                 court = extraire_nombre(row.get("Court", 0.0))
-                pourcentage = extraire_nombre(row.get("Pourcentage", 0.0))
+                
+                # 🛠️ NOM EXACT DE LA COLONNE AVEC SON SYMBOLE ET SES PARENTHÈSES
+                pourcentage = extraire_nombre(row.get("Pourcentage (%)", 0.0))
                 
                 # Valeur en direct de la ligne d'actif
                 valeur_ligne = quantite * court
@@ -42,8 +44,8 @@ def run_snapshot():
                 # Le global cumule absolument tout
                 total_global += valeur_ligne
                 
-                # Le stratégique prend uniquement si le pourcentage est défini (différent de 0)
-                if pourcentage != 0.0:
+                # Si le pourcentage est défini (supérieur à 0), c'est un actif stratégique
+                if pourcentage > 0.0:
                     actifs_strat += valeur_ligne
                     
             print(f"🔄 Calculs Données : Global = {total_global} $ | Stratégique = {actifs_strat} $")
