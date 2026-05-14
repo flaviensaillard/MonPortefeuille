@@ -2,11 +2,8 @@ name: Snapshot Automatique Minuit
 
 on:
   schedule:
-    - cron: '17 23 * * *'
+    - cron: '17 01 * * *'
   workflow_dispatch:
-  push:
-    branches:
-      - main # ⚡ L'électrochoc : force GitHub à réveiller le robot à chaque sauvegarde
 
 jobs:
   take-snapshot:
