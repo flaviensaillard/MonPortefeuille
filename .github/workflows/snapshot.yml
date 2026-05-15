@@ -1,8 +1,10 @@
-name: Snapshot Automatique Minuit
+name: Robot Snapshot Final
 
 on:
   schedule:
-    - cron: '17 01 * * *'
+    # 23h30 UTC = 01h30 du matin en France (Heure d'été)
+    # On choisit 23h30 pour éviter l'heure de pointe de minuit sur GitHub
+    - cron: '30 23 * * *'
   workflow_dispatch:
 
 jobs:
