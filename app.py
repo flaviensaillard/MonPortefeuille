@@ -590,18 +590,52 @@ elif page_choisie == "⚖️ Rééquilibrage":
     df = st.session_state.donnees
     c_usd = sum(extraire_nombre(r["Valeur totale"]) for _, r in df[df["Type"] == "💵 Cash"].iterrows())
     base = sum(extraire_nombre(r["Valeur totale"]) for _, r in df.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0) + c_usd
+    
     if base > 0:
         st.info(f"💡 Liquidités disponibles pour investissement : **{format_smart(c_usd, '$')}**")
+        
+        # 🎯 STRATÉGIE UNIVERSELLE : SEUIL FIXE À 2.0%
+        seuil_deviation_absolue = 2.0  # Alerte si l'écart dépasse ±2% par rapport à la cible
+        seuil_argent_minimum = 1000.0  # Alerte uniquement si le montant en jeu dépasse 1 000$
         res = []
+        
         for _, r in df.iterrows():
-            t = str(r["Ticker"]).upper(); cib = extraire_nombre(r["Pourcentage (%)"]) / 100
+            t = str(r["Ticker"]).upper()
+            cib = extraire_nombre(r["Pourcentage (%)"]) / 100
             if cib <= 0: continue
-            act, p = extraire_nombre(r["Valeur totale"]), extraire_nombre(r["Court"]); d = (base * cib) - act; q = d / p if p > 0 else 0
+            
+            act, p = extraire_nombre(r["Valeur totale"]), extraire_nombre(r["Court"])
+            d = (base * cib) - act
+            q = d / p if p > 0 else 0
+            
+            # Calcul de l'écart réel en pourcentage (ex: Actuel 7% - Cible 5% = +2%)
+            pct_actuel = (act / base) * 100
+            pct_cible = cib * 100
+            ecart_absolu_pct = pct_actuel - pct_cible
+            
+            # Déclenchement : Écart >= 2% ET montant en jeu >= 1000$
+            besoin_reequilibrage = abs(ecart_absolu_pct) >= seuil_deviation_absolue and abs(d) >= seuil_argent_minimum
+            
+            if besoin_reequilibrage:
+                action_txt = f"{'🟢 ACHETER' if d > 0 else '🔴 VENDRE'} {format_smart(abs(d), '$')}"
+            else:
+                action_txt = f"✅ ÉQUILIBRÉ ({format_smart(abs(d), '$')})"
+                
             current_pru_usd, _ = get_pru_and_qty(t, st.session_state.transactions)
-            res.append({"Ticker 🔒": t, "PRU ($) 🔒": format_smart(current_pru_usd, "$", is_price=True), "Var. Jour 🔒": st.session_state.variations.get(t, "→ 0.00 %"), "Perf. Globale 🔒": format_smart(((p / current_pru_usd) - 1) * 100, "%", force_sign=True) if current_pru_usd > 0 and p > 0 else "N/A", "Actuel ($) 🔒": format_smart(act, "$"), "Écart (%) 🔒": format_smart((act/base*100) - cib*100, "%", force_sign=True), "Action 🔒": f"✅ ÉQUILIBRÉ ({format_smart(abs(d), '$')})" if abs(d) < 1000 or abs((act/base*100) - cib*100) < 2.0 else f"{'🟢 ACHETER' if d > 0 else '🔴 VENDRE'} {format_smart(abs(d), '$')}", "Qté (+/-) 🔒": f"({'+ ' if q>0.000001 else '- ' if q<-0.000001 else ''}{format_smart(abs(q), is_price=True)})"})
+            
+            res.append({
+                "Ticker 🔒": t, 
+                "PRU ($) 🔒": format_smart(current_pru_usd, "$", is_price=True), 
+                "Var. Jour 🔒": st.session_state.variations.get(t, "→ 0.00 %"), 
+                "Perf. Globale 🔒": format_smart(((p / current_pru_usd) - 1) * 100, "%", force_sign=True) if current_pru_usd > 0 and p > 0 else "N/A", 
+                "Actuel ($) 🔒": format_smart(act, "$"), 
+                "Écart (%) 🔒": format_smart(ecart_absolu_pct, "%", force_sign=True), 
+                "Action 🔒": action_txt, 
+                "Qté (+/-) 🔒": f"({'+ ' if q > 0.000001 else '- ' if q < -0.000001 else ''}{format_smart(abs(q), is_price=True)})"
+            })
+            
         def cr(v): return 'color:#2ecc71' if "↗" in str(v) or "ACHETER" in str(v) or "+" in str(v) else ('color:#e74c3c' if "↘" in str(v) or "VENDRE" in str(v) or "-" in str(v) else 'color:#95a5a6')
         st.dataframe(pd.DataFrame(res).style.map(cr, subset=["Var. Jour 🔒", "Action 🔒", "Qté (+/-) 🔒", "Perf. Globale 🔒"]), use_container_width=True, hide_index=True)
-
 elif page_choisie == "💰 Fonds":
     st.title("💰 Fonds")
     st.write("Déclarez ici vos apports de capital (virements depuis votre compte bancaire). L'argent sera automatiquement ajouté à vos liquidités Cash.")
