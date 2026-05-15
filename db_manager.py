@@ -106,6 +106,7 @@ def recalculer_toute_la_base_projections(df):
     """
     Prend les données brutes de Supabase et recalcule proprement 
     l'évolution ligne par ligne par rapport à la date CHRONOLOGIQUE précédente.
+    Modifié pour immuniser le calcul contre les apports et retraits de capital (Vrai TWR).
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -124,28 +125,34 @@ def recalculer_toute_la_base_projections(df):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce').fillna(0.0)
 
-    # 3. CALCULS DES ÉVOLUTIONS (Basés STRICTEMENT sur la ligne de la date précédente)
-    # .diff() calcule la différence exacte avec la ligne juste au-dessus
-    df['Evolution actifs $'] = df['Actifs Stratégiques'].diff().fillna(0.0)
+    # 3. CALCULS DES ÉVOLUTIONS CORRIGÉS (Prise en compte des apports de capital)
+    # On calcule d'abord l'apport injecté (ou retiré) sur cette ligne précise
+    df['Variation_Capital'] = df['Capital investi'].diff().fillna(0.0)
     
-    # Évolution en % par rapport à la valeur précédente des actifs stratégiques
+    # L'évolution en $ liée au marché = (Valeur Actuelle - Valeur Veille) - Apport injecté
+    df['Evolution actifs $'] = df['Actifs Stratégiques'].diff().fillna(0.0) - df['Variation_Capital']
+    
+    # Évolution en % = Gains ou pertes du jour / Valeur du portefeuille de la veille
     val_precedente_strat = df['Actifs Stratégiques'].shift(1)
     df['Evolution actifs %'] = (df['Evolution actifs $'] / val_precedente_strat * 100).fillna(0.0)
     
-    # Évolutions cumulées (depuis le capital investi de base)
+    # Évolutions cumulées classiques (Valeur actuelle du portefeuille - Total de votre argent injecté)
     df['Evolution cumulée $'] = df['Actifs Stratégiques'] - df['Capital investi']
     df['Evolution cumulée %'] = ((df['Actifs Stratégiques'] - df['Capital investi']) / df['Capital investi'] * 100).fillna(0.0)
     
-    # Calculs pour le Total Global
+    # Calculs cumulés pour le Total Global
     df['TG_Evolution cumulée $'] = df['Total Global'] - df['Capital investi']
     df['TG_Evolution cumulée %'] = ((df['Total Global'] - df['Capital investi']) / df['Capital investi'] * 100).fillna(0.0)
     
-    # 4. CALCULS DES SCORES TWR 
-    # Formules par défaut alignées avec vos évolutions cumulées
-    df['Score TWR %'] = df['Evolution cumulée %']
-    df['TG_Score TWR %'] = df['TG_Evolution cumulée %']
+    # 4. CALCULS DES SCORES TWR GÉOMÉTRIQUES CUMULÉS
+    # Pour un vrai TWR, on multiplie les multiplicateurs de performance de chaque sous-période
+    df['Rendement_Multiplicateur'] = 1 + (df['Evolution actifs %'] / 100)
+    df['Score TWR %'] = (df['Rendement_Multiplicateur'].cumprod() - 1) * 100
+    
+    # Le Total Global suit la base de performance TWR recalculée des actifs
+    df['TG_Score TWR %'] = df['Score TWR %']
 
-    # On supprime les colonnes de travail temporaires
-    df = df.drop(columns=['Date_Propre', 'Date_DT'])
+    # On supprime les colonnes de travail temporaires pour rendre un dataframe propre
+    df = df.drop(columns=['Date_Propre', 'Date_DT', 'Variation_Capital', 'Rendement_Multiplicateur'])
     
     return df
