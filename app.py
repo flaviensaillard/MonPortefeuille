@@ -695,10 +695,13 @@ elif page_choisie == "🏖️ Suivi":
 elif page_choisie == "📈 Performance":
     st.title("📈 Performances Annuelles & Inflation")
     df_p = st.session_state.projections
-    if df_p.empty: st.info("Aucune donnée disponible.")
+    if df_p.empty: 
+        st.info("Aucune donnée disponible.")
     else:
-        try: or_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
-        except: or_px = 2000.0
+        try: 
+            or_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
+        except: 
+            or_px = 2000.0
         
         df_viz = df_p.copy()
         df_viz = df_viz.dropna(subset=['Date']).sort_values('Date')
@@ -706,21 +709,46 @@ elif page_choisie == "📈 Performance":
         df_viz = df_viz.dropna(subset=['Date_DT']).sort_values('Date_DT')
         df_viz['Année'] = df_viz['Date_DT'].dt.year
 
-        df_y = df_viz.groupby('Année').last().reset_index()
-        df_y['Année'] = df_y['Année'].astype(int)
+        # 1. Extraction de la dernière ligne de chaque année
+        df_lasts = df_viz.groupby('Année').last().reset_index()
         
-        df_y['TWR_mult'] = 1 + (df_y['Score TWR %'] / 100); df_y['TWR_mult_prev'] = df_y['TWR_mult'].shift(1).fillna(1.0)
-        df_y['Performance brute (%)'] = ((df_y['TWR_mult'] / df_y['TWR_mult_prev']) - 1) * 100
+        # 2. Création d'un dictionnaire pour mapper chaque année à son TWR global de fin d'année
+        twr_fin_annee = dict(zip(df_lasts['Année'], df_lasts['Score TWR %']))
+        
+        # 3. Calcul de la performance brute réelle par année civile
+        perf_brutes = []
+        for index, row in df_lasts.iterrows():
+            annee_actuelle = row['Année']
+            twr_fin = row['Score TWR %']
+            
+            # Si l'année précédente existe, on calcule la performance spécifique de l'année N
+            if (annee_actuelle - 1) in twr_fin_annee:
+                twr_debut = twr_fin_annee[annee_actuelle - 1]
+                perf_annee = (((1 + twr_fin / 100) / (1 + twr_debut / 100)) - 1) * 100
+            else:
+                # Première année de l'historique (point de départ)
+                perf_annee = twr_fin
+                
+            perf_brutes.append(perf_annee)
+            
+        df_y = df_lasts.copy()
+        df_y['Année'] = df_y['Année'].astype(int)
+        df_y['Performance brute (%)'] = perf_brutes
+        
+        # 4. Annualisation volontaire de la première année (si moins de 330 jours d'historique cette année-là)
         jours_annee_1 = (df_viz[df_viz['Année'] == df_viz['Date_DT'].min().year]['Date_DT'].max() - df_viz['Date_DT'].min()).days
         if jours_annee_1 > 0 and jours_annee_1 < 330 and not df_y[df_y['Année'] == df_viz['Date_DT'].min().year].empty:
-            df_y.loc[df_y[df_y['Année'] == df_viz['Date_DT'].min().year].index, 'Performance brute (%)'] = (((1 + df_y.loc[df_y[df_y['Année'] == df_viz['Date_DT'].min().year].index, 'Performance brute (%)'].values[0] / 100.0) ** (365.25 / jours_annee_1)) - 1) * 100.0
+            perf_prem_annee = df_y.loc[df_y['Année'] == df_viz['Date_DT'].min().year, 'Performance brute (%)'].values[0]
+            df_y.loc[df_y['Année'] == df_viz['Date_DT'].min().year, 'Performance brute (%)'] = (((1 + perf_prem_annee / 100.0) ** (365.25 / jours_annee_1)) - 1) * 100.0
         
+        # 5. Intégration de l'inflation et calculs des performances nettes
         st.session_state.inflation['Année'] = st.session_state.inflation['Année'].astype(int)
         df_y = df_y.merge(st.session_state.inflation, on='Année', how='left').fillna({'Inflation (%)': 0.0})
         df_y['Performance nette (%)'] = (((1 + df_y['Performance brute (%)'] / 100) / (1 + df_y['Inflation (%)'] / 100)) - 1) * 100
         df_y['Gains Nets ($)'] = df_y['Evolution cumulée $'] - df_y['Evolution cumulée $'].shift(1).fillna(0)
         df_y['Valeur Bilan (Or)'] = df_y['Actifs Stratégiques'] / or_px
         
+        # 6. Affichage des Moyennes Historiques
         st.subheader("📊 Moyennes Historiques")
         df_hist = df_y[df_y['Année'] < datetime.datetime.now().year].copy()
         if not df_hist.empty:
@@ -728,19 +756,30 @@ elif page_choisie == "📈 Performance":
             c_m1.metric("Moyenne Perf. Brute", format_smart(df_hist['Performance brute (%)'].mean(), "%", force_sign=True))
             c_m2.metric("Moyenne Inflation", format_smart(df_hist['Inflation (%)'].mean(), "%"))
             c_m3.metric("Moyenne Perf. Nette", format_smart(df_hist['Performance nette (%)'].mean(), "%", force_sign=True))
-            with c_m4: afficher_montant_double("Moyenne Gains / An", df_hist['Gains Nets ($)'].mean(), taille="medium")
-        else: st.info("L'historique complet est insuffisant pour calculer une moyenne.")
+            with c_m4: 
+                afficher_montant_double("Moyenne Gains / An", df_hist['Gains Nets ($)'].mean(), taille="medium")
+        else: 
+            st.info("L'historique complet est insuffisant pour calculer une moyenne.")
         
-        st.divider(); st.write("Ce tableau récapitule vos résultats par année civile.")
+        # 7. Affichage du Tableau Récapitulatif (Verrouillé)
+        st.divider()
+        st.write("Ce tableau récapitule vos résultats par année civile.")
         df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Actifs Stratégiques', 'Valeur Bilan (Or)']].copy()
-        df_display.rename(columns={'Actifs Stratégiques': 'Valeur Bilan ($)'}, inplace=True); df_display['Année'] = df_display['Année'].astype(str)
+        df_display.rename(columns={'Actifs Stratégiques': 'Valeur Bilan ($)'}, inplace=True)
+        df_display['Année'] = df_display['Année'].astype(str)
         df_sorted = df_display.sort_values(by='Année', ascending=False).reset_index(drop=True)
-        for c in ["Performance brute (%)", "Inflation (%)", "Performance nette (%)"]: df_sorted[c] = df_sorted[c].apply(lambda x: format_smart(x, "%"))
-        for c in ["Gains Nets ($)", "Valeur Bilan ($)"]: df_sorted[c] = df_sorted[c].apply(lambda x: format_smart(x, "$"))
+        
+        for c in ["Performance brute (%)", "Inflation (%)", "Performance nette (%)"]: 
+            df_sorted[c] = df_sorted[c].apply(lambda x: format_smart(x, "%"))
+        for c in ["Gains Nets ($)", "Valeur Bilan ($)"]: 
+            df_sorted[c] = df_sorted[c].apply(lambda x: format_smart(x, "$"))
         df_sorted["Valeur Bilan (Or)"] = df_sorted["Valeur Bilan (Or)"].apply(lambda x: format_smart(x, "oz"))
+        
         st.dataframe(df_sorted, column_config={c: st.column_config.TextColumn(c + " 🔒") for c in df_sorted.columns}, hide_index=True, use_container_width=True)
 
-        st.divider(); st.subheader("📊 Comparaison Brute vs Nette")
+        # 8. Graphique de Comparaison Brute vs Nette
+        st.divider()
+        st.subheader("📊 Comparaison Brute vs Nette")
         df_chart = df_sorted.sort_values(by='Année', ascending=True)[['Année', 'Performance brute (%)', 'Performance nette (%)']].copy()
         df_chart['Performance brute (%)'] = df_chart['Performance brute (%)'].str.replace(' %', '').astype(float)
         df_chart['Performance nette (%)'] = df_chart['Performance nette (%)'].str.replace(' %', '').astype(float)
@@ -748,7 +787,6 @@ elif page_choisie == "📈 Performance":
         df_chart['Type'] = df_chart['Type'].replace({'Performance brute (%)': "Brute (Avant inflation)", 'Performance nette (%)': "Nette (Pouvoir d'achat réel)"})
         
         fig_bar = px.bar(df_chart, x='Année', y='Rentabilité (%)', color='Type', barmode='group', color_discrete_map={"Brute (Avant inflation)": "#3498db", "Nette (Pouvoir d'achat réel)": "#2ecc71"}, text_auto='.2f')
-        # UX : Optimisation Mobile de la légende
         fig_bar.update_layout(yaxis_title="Rentabilité (%)", xaxis_title="", legend_title="", legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
         st.plotly_chart(fig_bar, use_container_width=True)
 
