@@ -2,8 +2,8 @@ name: Robot Snapshot Final
 
 on:
 schedule:
-    # 02h34 UTC = 04h34 du matin en France (Heure d'été)
-    - cron: '34 21 * * *'
+    # 21h17 UTC = 23h17 en France (Heure d'été)
+    - cron: '17 21 * * *'
   workflow_dispatch:
 
 jobs:
