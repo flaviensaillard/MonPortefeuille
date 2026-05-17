@@ -1,10 +1,9 @@
 name: Robot Snapshot Final
 
 on:
-  schedule:
-    # 23h30 UTC = 01h30 du matin en France (Heure d'été)
-    # On choisit 23h30 pour éviter l'heure de pointe de minuit sur GitHub
-    - cron: '30 23 * * *'
+schedule:
+    # 02h34 UTC = 04h34 du matin en France (Heure d'été)
+    - cron: '34 21 * * *'
   workflow_dispatch:
 
 jobs:
