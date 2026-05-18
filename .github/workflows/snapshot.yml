@@ -2,7 +2,7 @@ name: Robot Snapshot Final
 
 on:
   schedule:
-    # 21h34 UTC = 23h34 du matin en France (Heure d'été)
+    # 21h34 UTC = 23h34 en France (Heure d'été)
     - cron: '34 21 * * *'
   workflow_dispatch:
 
