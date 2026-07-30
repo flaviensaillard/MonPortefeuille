@@ -3,7 +3,7 @@
   "name": "Porte-feuille",
   "icons": [
     {
-      "src": "https://github.com/flaviensaillard/MonPortefeuille/blob/main/favicon_512.png",
+      "src": "favicon_512.png",
       "type": "image/png",
       "sizes": "512x512"
     }
