@@ -1,5 +1,5 @@
 {
-  "short_name": "Porte feuille",
+  "short_name": "Porte-feuille",
   "name": "Porte-feuille",
   "icons": [
     {
@@ -9,9 +9,11 @@
     }
   ],
   "start_url": "/",
-  "display": "standalone",
+  "display": "fullscreen",
   "theme_color": "#0e1117",
   "background_color": "#0e1117",
-  "description": "Gestion de porte-feuille",
-  "id": "Porte-feuille"
+  "lang": "fr",
+  "dir": "auto",
+  "orientation": "portrait",
+  "description": "Porte-feuille"
 }
