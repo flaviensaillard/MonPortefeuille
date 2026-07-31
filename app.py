@@ -12,7 +12,6 @@ from streamlit_autorefresh import st_autorefresh
 
 # --- IMPORTATION DE L'ARCHITECTURE MODULAIRE ---
 from utils import format_smart, extraire_nombre, nettoyer_dataframe, is_crypto_ticker
-# 🔥 CORRECTION : On importe ici la fonction de calcul robuste qui vient de db_manager
 from db_manager import load_sheet, save_sheet, append_to_sheet, obtenir_derniere_projection_veille, recalculer_toute_la_base_projections
 from api_client import recuperer_inflation_france, get_historical_fx, get_historical_usd_rate
 from tax_engine import calcul_frais_km, calcul_impot_ir, get_action_tax_data, get_crypto_tax_data, get_pru_and_qty
@@ -42,7 +41,6 @@ try:
 except: 
     TAX_EUR_USD = 1.05 
 
-# 🛡️ Sécurité anti-crash : on crée un alias pour que les deux orthographes fonctionnent !
 TAUX_EUR_USD = TAX_EUR_USD 
 
 # --- 2. SÉCURITÉ ---
@@ -69,6 +67,7 @@ def afficher_montant_double(label, montant_usd, delta_str="", couleur_valeur=Non
     t_val, t_lbl = ("1.8rem", "0.9rem") if taille == "large" else ("1.4rem", "0.85rem") if taille == "medium" else ("1.2rem", "0.85rem")
     c_val = f"color: {couleur_valeur};" if couleur_valeur else ""
     st.markdown(f"""<div style="margin-bottom: 0.8rem;"><div style="font-size: {t_lbl}; opacity: 0.8; margin-bottom: 0.2rem;">{label}</div><div style="font-size: {t_val}; font-weight: 600; line-height: 1.2; {c_val}">{s_usd} $ <span style="font-size: 0.65em; opacity: 0.7; font-weight: 400;">/ {s_eur} €</span></div>{delta_html}</div>""", unsafe_allow_html=True)
+
 def recalculer_totaux_locaux():
     if "donnees" in st.session_state:
         df = st.session_state.donnees.copy()
@@ -95,7 +94,6 @@ def calculer_metriques_jour(df_actuel, variations):
         match = re.search(r'(\d+\.?\d*)', var_str)
         if match:
             val = float(match.group(1))
-            # C'est ici la correction : on remet le signe négatif si on détecte une flèche rouge ou un moins
             if '↘' in var_str or '-' in var_str:
                 return -val
             return val
@@ -283,10 +281,6 @@ initialize_state()
 
 # --- 5. LOGIQUE DES PAGES (UI) ---
 
-initialize_state()
-
-# --- 5. LOGIQUE DES PAGES (UI) ---
-
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
     df_actuel, df_p = st.session_state.donnees, st.session_state.projections
@@ -340,13 +334,11 @@ if page_choisie == "📊 Tableau de bord":
             val_global_veille = 0.0
             val_strat_veille = 0.0
         
-        # Calcul de la variation pour le Total Global depuis minuit
         if val_global_veille > 0:
             diff_val = val_total - val_global_veille
             diff_pct = (diff_val / val_global_veille) * 100
             delta_global_txt = f"{diff_val:+.2f} $ ({diff_pct:+.2f}%) Aujourd'hui"
             
-        # Calcul de la variation pour les Actifs Stratégiques depuis minuit
         if val_strat_veille > 0:
             diff_strat_val = val_invest - val_strat_veille
             diff_strat_pct = (diff_strat_val / val_strat_veille) * 100
@@ -357,10 +349,7 @@ if page_choisie == "📊 Tableau de bord":
     st.subheader("🌍 2. Total Global (Toutes liquidités incluses)")
     c_tg, _ = st.columns(2)
     with c_tg:
-        # Affichage du montant avec le delta calculé par rapport à la veille
         afficher_montant_double("Total Global", val_total, delta_str=delta_global_txt)
-        
-        # Affichage de la performance sur 1 an glissant
         st.markdown(
             f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'>"
             f"<span style='font-size:1.1em;'>{'📈' if delta_tg >= 0 else '📉'} Performance 1 an : "
@@ -402,7 +391,6 @@ if page_choisie == "📊 Tableau de bord":
                 fig_lt.update_yaxes(zeroline=False, rangemode="normal")
                 st.plotly_chart(fig_lt, use_container_width=True)
 
-        # --- CAMEMBERT TOTAL GLOBAL ---
         st.write(""); st.markdown("**🌍 Répartition du Patrimoine (Total Global)**")
         cp1, _ = st.columns(2)
         with cp1:
@@ -419,10 +407,7 @@ if page_choisie == "📊 Tableau de bord":
     st.subheader("🎯 3. Actifs Stratégiques (Investissements cibles)")
     c_st, _ = st.columns(2)
     with c_st:
-        # Affichage avec le delta J-1
         afficher_montant_double("Actifs Stratégiques", val_invest, delta_str=delta_strat_txt)
-        
-        # Affichage de la performance sur 1 an glissant
         st.markdown(
             f"<div style='margin-top:-0.5rem; margin-bottom:1rem;'>"
             f"<span style='font-size:1.1em;'>{'📈' if delta >= 0 else '📉'} Performance 1 an : "
@@ -431,7 +416,6 @@ if page_choisie == "📊 Tableau de bord":
             unsafe_allow_html=True
         )
         
-    # --- GRAPHIQUE ÉVOLUTION ACTIFS STRATÉGIQUES ---
     if df_p.empty: st.info("Aucune donnée.")
     else:
         df_v_s = df_p_live.copy(); df_v_s['Date_DT'] = pd.to_datetime(df_v_s['Date'], dayfirst=True, errors='coerce')
@@ -465,7 +449,6 @@ if page_choisie == "📊 Tableau de bord":
                 fig_ls.update_yaxes(zeroline=False, rangemode="normal")
                 st.plotly_chart(fig_ls, use_container_width=True)
 
-    # --- CAMEMBERTS ACTIFS STRATÉGIQUES ---
     st.write(""); st.markdown("**🎯 Répartition détaillée de la stratégie**")
     df_st = df_actuel[df_actuel['Pourcentage (%)'].apply(extraire_nombre) > 0].copy(); df_st['Val'] = df_st['Valeur totale'].apply(extraire_nombre)
     cp1, cp2 = st.columns(2)
@@ -483,13 +466,13 @@ if page_choisie == "📊 Tableau de bord":
             f2.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
             st.plotly_chart(f2, use_container_width=True)
 
-    # --- SECTION 4 : LIBERTÉ FINANCIÈRE ---
     st.divider(); st.subheader("🏖️ 4. Liberté Financière (Rente Mensuelle actuelle)")
     cr1, cr2 = st.columns(2)
     with cr1: inf = st.slider("Inflation cible à déduire (%) ✍️", 0.0, 15.0, 2.0, 0.1, key="dash_infl")
     with cr2:
         tx_r = ((1 + 0.08) / (1 + (inf / 100.0))) - 1
         afficher_montant_double("Rente Mensuelle Nette (Base 8% par an)", (val_invest * max(0.0, tx_r)) / 12.0, couleur_valeur="#3498db")
+
 elif page_choisie == "📋 Liste des actifs":
     st.title("📋 Liste de mes actifs"); st.write("Modifiez l'allocation cible de vos actifs ici. **La colonne Quantité est verrouillée pour vos investissements** et se met à jour via l'onglet 'Rééquilibrage'.")
     df_actuel = st.session_state.donnees.copy()
@@ -594,9 +577,8 @@ elif page_choisie == "⚖️ Rééquilibrage":
     if base > 0:
         st.info(f"💡 Liquidités disponibles pour investissement : **{format_smart(c_usd, '$')}**")
         
-        # 🎯 STRATÉGIE UNIVERSELLE : SEUIL FIXE À 2.0%
-        seuil_deviation_absolue = 2.0  # Alerte si l'écart dépasse ±2% par rapport à la cible
-        seuil_argent_minimum = 1000.0  # Alerte uniquement si le montant en jeu dépasse 1 000$
+        seuil_deviation_absolue = 2.0
+        seuil_argent_minimum = 1000.0
         res = []
         
         for _, r in df.iterrows():
@@ -608,12 +590,10 @@ elif page_choisie == "⚖️ Rééquilibrage":
             d = (base * cib) - act
             q = d / p if p > 0 else 0
             
-            # Calcul de l'écart réel en pourcentage (ex: Actuel 7% - Cible 5% = +2%)
             pct_actuel = (act / base) * 100
             pct_cible = cib * 100
             ecart_absolu_pct = pct_actuel - pct_cible
             
-            # Déclenchement : Écart >= 2% ET montant en jeu >= 1000$
             besoin_reequilibrage = abs(ecart_absolu_pct) >= seuil_deviation_absolue and abs(d) >= seuil_argent_minimum
             
             if besoin_reequilibrage:
@@ -636,6 +616,7 @@ elif page_choisie == "⚖️ Rééquilibrage":
             
         def cr(v): return 'color:#2ecc71' if "↗" in str(v) or "ACHETER" in str(v) or "+" in str(v) else ('color:#e74c3c' if "↘" in str(v) or "VENDRE" in str(v) or "-" in str(v) else 'color:#95a5a6')
         st.dataframe(pd.DataFrame(res).style.map(cr, subset=["Var. Jour 🔒", "Action 🔒", "Qté (+/-) 🔒", "Perf. Globale 🔒"]), use_container_width=True, hide_index=True)
+
 elif page_choisie == "💰 Fonds":
     st.title("💰 Fonds")
     st.write("Déclarez ici vos apports de capital (virements depuis votre compte bancaire). L'argent sera automatiquement ajouté à vos liquidités Cash.")
@@ -648,11 +629,9 @@ elif page_choisie == "💰 Fonds":
                     o_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
                     m_usd = m_s if d_s == "$" else m_s * TAUX_EUR_USD; m_eur = m_s if d_s == "€" else m_s / TAUX_EUR_USD
                     
-                    # 🛠️ CALCUL DU NOUVEAU TOTAL DES APPORTS NETS FISCAL
                     ancien_total = sum(r["Montant $"] if "ajout" in r["Type"].lower() else -r["Montant $"] for _, r in st.session_state.historique.iterrows())
                     nouveau_total = ancien_total + (m_usd if t_m == "Ajout de fond propre" else -m_usd)
                     
-                    # 🛠️ INCLUSION DE LA COLONNE EXACTE POUR SUPABASE
                     nl = {
                         "Date": d_m.strftime("%d/%m/%Y"), 
                         "Type": t_m, 
@@ -690,27 +669,13 @@ elif page_choisie == "🏖️ Suivi":
     if not st.session_state.projections.empty:
         df_v = st.session_state.projections.copy()
         
-        # 1. NETTOYAGE : On extrait uniquement les 10 premiers caractères (JJ/MM/AAAA) 
-        # pour ignorer les heures/minutes/secondes qui font planter Python
         df_v['Date_Propre'] = df_v['Date'].astype(str).str.slice(0, 10)
-        
-        # 2. CONVERSION : On convertit en vraie date pour le tri
         df_v['DT'] = pd.to_datetime(df_v['Date_Propre'], dayfirst=True, errors='coerce')
-        
-        # Si jamais une date fait encore de la résistance, on garde quand même la ligne
-        # en lui donnant la date du jour pour ne pas perdre tes données financières !
         df_v['DT'] = df_v['DT'].fillna(pd.Timestamp.now())
-        
-        # 3. TRI : Un tri parfait du plus récent au plus ancien
         df_v = df_v.sort_values('DT', ascending=False)
-        
-        # 4. HARMONISATION : On réécrit proprement la colonne Date pour l'écran
         df_v['Date'] = df_v['DT'].dt.strftime('%d/%m/%Y')
-        
-        # 5. NETTOYAGE DES COLONNES TECHNIQUES
         df_v = df_v.drop(columns=['DT', 'Date_Propre'])
         
-        # 6. FORMATAGE FINANCIER (Inchangé)
         for c in ["Capital investi", "Actifs Stratégiques", "Total Global", "Evolution actifs $", "Evolution cumulée $", "TG_Evolution cumulée $"]:
             if c in df_v.columns:
                 df_v[c] = df_v[c].apply(lambda x: format_smart(x, "$", force_sign=("Evolution" in c)))
@@ -719,13 +684,13 @@ elif page_choisie == "🏖️ Suivi":
             if c in df_v.columns:
                 df_v[c] = df_v[c].apply(lambda x: format_smart(x, "%", force_sign=True))
         
-        # 7. AFFICHAGE FINALE 🔒
         st.dataframe(
             df_v, 
             column_config={c: st.column_config.TextColumn(c + " 🔒") for c in df_v.columns}, 
             use_container_width=True, 
             hide_index=True
         )
+
 elif page_choisie == "📈 Performance":
     st.title("📈 Performances Annuelles & Inflation")
     df_p = st.session_state.projections
@@ -743,24 +708,18 @@ elif page_choisie == "📈 Performance":
         df_viz = df_viz.dropna(subset=['Date_DT']).sort_values('Date_DT')
         df_viz['Année'] = df_viz['Date_DT'].dt.year
 
-        # 1. Extraction de la dernière ligne de chaque année
         df_lasts = df_viz.groupby('Année').last().reset_index()
-        
-        # 2. Création d'un dictionnaire pour mapper chaque année à son TWR global de fin d'année
         twr_fin_annee = dict(zip(df_lasts['Année'], df_lasts['Score TWR %']))
         
-        # 3. Calcul de la performance brute réelle par année civile
         perf_brutes = []
         for index, row in df_lasts.iterrows():
             annee_actuelle = row['Année']
             twr_fin = row['Score TWR %']
             
-            # Si l'année précédente existe, on calcule la performance spécifique de l'année N
             if (annee_actuelle - 1) in twr_fin_annee:
                 twr_debut = twr_fin_annee[annee_actuelle - 1]
                 perf_annee = (((1 + twr_fin / 100) / (1 + twr_debut / 100)) - 1) * 100
             else:
-                # Première année de l'historique (point de départ)
                 perf_annee = twr_fin
                 
             perf_brutes.append(perf_annee)
@@ -769,20 +728,17 @@ elif page_choisie == "📈 Performance":
         df_y['Année'] = df_y['Année'].astype(int)
         df_y['Performance brute (%)'] = perf_brutes
         
-        # 4. Annualisation volontaire de la première année (si moins de 330 jours d'historique cette année-là)
         jours_annee_1 = (df_viz[df_viz['Année'] == df_viz['Date_DT'].min().year]['Date_DT'].max() - df_viz['Date_DT'].min()).days
         if jours_annee_1 > 0 and jours_annee_1 < 330 and not df_y[df_y['Année'] == df_viz['Date_DT'].min().year].empty:
             perf_prem_annee = df_y.loc[df_y['Année'] == df_viz['Date_DT'].min().year, 'Performance brute (%)'].values[0]
             df_y.loc[df_y['Année'] == df_viz['Date_DT'].min().year, 'Performance brute (%)'] = (((1 + perf_prem_annee / 100.0) ** (365.25 / jours_annee_1)) - 1) * 100.0
         
-        # 5. Intégration de l'inflation et calculs des performances nettes
         st.session_state.inflation['Année'] = st.session_state.inflation['Année'].astype(int)
         df_y = df_y.merge(st.session_state.inflation, on='Année', how='left').fillna({'Inflation (%)': 0.0})
         df_y['Performance nette (%)'] = (((1 + df_y['Performance brute (%)'] / 100) / (1 + df_y['Inflation (%)'] / 100)) - 1) * 100
         df_y['Gains Nets ($)'] = df_y['Evolution cumulée $'] - df_y['Evolution cumulée $'].shift(1).fillna(0)
         df_y['Valeur Bilan (Or)'] = df_y['Actifs Stratégiques'] / or_px
         
-        # 6. Affichage des Moyennes Historiques
         st.subheader("📊 Moyennes Historiques")
         df_hist = df_y[df_y['Année'] < datetime.datetime.now().year].copy()
         if not df_hist.empty:
@@ -795,7 +751,6 @@ elif page_choisie == "📈 Performance":
         else: 
             st.info("L'historique complet est insuffisant pour calculer une moyenne.")
         
-        # 7. Affichage du Tableau Récapitulatif (Verrouillé)
         st.divider()
         st.write("Ce tableau récapitule vos résultats par année civile.")
         df_display = df_y[['Année', 'Performance brute (%)', 'Inflation (%)', 'Performance nette (%)', 'Gains Nets ($)', 'Actifs Stratégiques', 'Valeur Bilan (Or)']].copy()
@@ -811,7 +766,6 @@ elif page_choisie == "📈 Performance":
         
         st.dataframe(df_sorted, column_config={c: st.column_config.TextColumn(c + " 🔒") for c in df_sorted.columns}, hide_index=True, use_container_width=True)
 
-        # 8. Graphique de Comparaison Brute vs Nette
         st.divider()
         st.subheader("📊 Comparaison Brute vs Nette")
         df_chart = df_sorted.sort_values(by='Année', ascending=True)[['Année', 'Performance brute (%)', 'Performance nette (%)']].copy()
@@ -900,14 +854,12 @@ elif page_choisie == "🌴 Retraite":
         st.divider(); st.subheader("📈 Évolution du Pouvoir d'Achat Réel (Capital Net)")
         fig_ret = px.line(pd.DataFrame(trajectory_data).melt(id_vars="Année", var_name="Scénario", value_name="Valeur Nette ($)"), x="Année", y="Valeur Nette ($)", color="Scénario", color_discrete_map={"Capital Net (Scénario A)": "#2ecc71", "Capital Net (Scénario B)": "#3498db"})
         fig_ret.update_traces(line_shape='spline')
-        # UX : Optimisation Mobile de la légende
         fig_ret.update_layout(yaxis_title="Capital Net d'Inflation ($)", xaxis_title="Année", legend_title="", legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
         st.plotly_chart(fig_ret, use_container_width=True)
 
 elif page_choisie == "🏛️ Fiscalité":
     st.title("🏛️ Simulateur Fiscal (Lecture Drive)")
     
-    # UX : Indicateur visuel lors du calcul des impôts
     with st.spinner("Analyse de vos transactions et calculs fiscaux en cours..."):
         df_t = st.session_state.transactions.copy()
         if 'Date_DT' not in df_t.columns: df_t['Date_DT'] = pd.to_datetime(df_t.get('Date'), dayfirst=True, errors='coerce')
@@ -962,7 +914,6 @@ elif page_choisie == "🏛️ Fiscalité":
         try: save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
         except: pass
 
-    # --- 1. MA SITUATION FAMILIALE ---
     st.subheader("👤 1. Ma Situation Familiale")
     c_sit1, c_sit2 = st.columns(2)
     with c_sit1:
@@ -972,7 +923,6 @@ elif page_choisie == "🏛️ Fiscalité":
     
     st.divider()
 
-    # --- CALCUL DE L'IMPOT (GLOBAL) ---
     salaire_1_val = float(st.session_state.config.get("f_s1", 30000.0))
     salaire_2_val = float(st.session_state.config.get("f_s2", 0.0)) if "Marié" in statut else 0.0
     frais_reels_1_val = calcul_frais_km(int(st.session_state.config.get("f_k1", 0)), int(st.session_state.config.get("f_cv1", 5))) + (int(st.session_state.config.get("f_r1", 0)) * float(st.session_state.config.get("frais_repas", 5.35))) if st.session_state.config.get("f_u1", False) else 0.0
@@ -1001,7 +951,6 @@ elif page_choisie == "🏛️ Fiscalité":
 
     out_2042_container = st.empty()
 
-    # --- DOSSIER 1 : FORMULAIRE 2042 ---
     exp_2042 = st.expander("📁 Formulaire 2042 (Déclaration Principale)", expanded=True)
     with exp_2042:
         st.markdown("### ⚙️ Paramètres Fiscaux & Revenus")
@@ -1052,7 +1001,6 @@ elif page_choisie == "🏛️ Fiscalité":
         
         out_2042_lines = st.container()
 
-    # --- DOSSIER 2 : FORMULAIRE 2047 ---
     with st.expander("📁 Formulaire 2047 (Revenus mobiliers étrangers - ex: Revolut)"):
         st.markdown("### 🔹 Rubrique 2 : Des revenus des valeurs et capitaux mobiliers imposables en France")
         c_rev1, c_rev2 = st.columns(2)
@@ -1069,7 +1017,6 @@ elif page_choisie == "🏛️ Fiscalité":
             st.markdown(f"- **Ligne 251 (Total) :** `{format_smart(interets_net, '€')}`")
             st.markdown(f"- **Ligne 252 (Total 2TR) :** `{format_smart(interets_net, '€')}`")
 
-    # --- AFFICHAGE LIGNES 2042 ---
     with out_2042_lines:
         st.divider()
         st.markdown("### 🔹 Lignes à reporter sur la Déclaration 2042")
@@ -1098,7 +1045,6 @@ elif page_choisie == "🏛️ Fiscalité":
         else:
             st.markdown("- `Aucun intérêt à reporter.`")
 
-    # --- DOSSIER 3 : FORMULAIRE 2074 ---
     with st.expander("📁 Formulaire 2074 (Plus-values Classiques : Actions, ETF...)"):
         if df_actions.empty:
             st.info("Aucune cession d'actions/ETF détectée pour cette année.")
@@ -1156,7 +1102,6 @@ elif page_choisie == "🏛️ Fiscalité":
                 if choix == "PFU": st.markdown(f"1. **Flat Tax (PFU)** : Dans le **Cadre 11**, remplissez uniquement la **Colonne A** (et **C/E** avec la même valeur).")
                 else: st.markdown(f"1. **Barème Progressif** : Dans le **Cadre 11**, remplissez la **Colonne A** (et **C/E** avec la même valeur). Remplissez **les colonnes F ou G** selon la durée de détention.")
 
-    # --- DOSSIER 4 : FORMULAIRE 2086 ---
     with st.expander("📁 Formulaire 2086 (Cryptomonnaies)"):
         if df_cryptos.empty:
             st.info("Aucune cession de cryptomonnaie détectée pour cette année.")
@@ -1180,9 +1125,8 @@ elif page_choisie == "🏛️ Fiscalité":
                     st.markdown(f"- **221 Fractions de capital initial déduites :** `{format_smart(row_c['Ligne 221'], '€')}`")
                     st.markdown(f"- **222 Soultes reçues en cas d'échanges antérieurs :** `0 €`")
                     st.markdown(f"- **223 Prix total d'acquisition net :** `{format_smart(row_c['Ligne 223'], '€')}`")
-                    st.markdown(f"- **224 Plus-value ou moins-value globale :** `{format_smart(row_c['Ligne 224'], '€', force_sign=True)}")
+                    st.markdown(f"- **224 Plus-value ou moins-value globale :** `{format_smart(row_c['Ligne 224'], '€', force_sign=True)}`")
 
-    # --- SECTION FINALE : RECOMMANDATION GLOBALE ---
     st.divider()
     st.subheader("💡 3. Recommandation d'imposition globale & Prélèvement à la Source")
     if bilan_net_actions > 0:
