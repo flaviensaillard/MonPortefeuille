@@ -6,7 +6,6 @@ from supabase import create_client
 def extraire_nombre(val):
     if pd.isna(val) or val is None:
         return 0.0
-    # Nettoyage complet : espaces, devises et le symbole pourcentage
     val_str = str(val).replace(" ", "").replace("\xa0", "").replace(",", ".").replace("€", "").replace("$", "").replace("%", "")
     try:
         return float(val_str)
@@ -16,6 +15,16 @@ def extraire_nombre(val):
 def run_snapshot():
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_KEY")
+    
+    # ✅ CORRECTION : Fallback vers les secrets Streamlit si variables d'environnement absentes
+    if not url or not key:
+        try:
+            import streamlit as st
+            url = st.secrets["SUPABASE_URL"]
+            key = st.secrets["SUPABASE_KEY"]
+        except:
+            pass
+    
     if not url or not key:
         print("❌ Erreur : Variables URL ou KEY manquantes.")
         return
@@ -34,17 +43,11 @@ def run_snapshot():
             for _, row in df_donnees.iterrows():
                 quantite = extraire_nombre(row.get("Quantité", 0.0))
                 court = extraire_nombre(row.get("Court", 0.0))
-                
-                # 🛠️ NOM EXACT DE LA COLONNE AVEC SON SYMBOLE ET SES PARENTHÈSES
                 pourcentage = extraire_nombre(row.get("Pourcentage (%)", 0.0))
                 
-                # Valeur en direct de la ligne d'actif
                 valeur_ligne = quantite * court
-                
-                # Le global cumule absolument tout
                 total_global += valeur_ligne
                 
-                # Si le pourcentage est défini (supérieur à 0), c'est un actif stratégique
                 if pourcentage > 0.0:
                     actifs_strat += valeur_ligne
                     
@@ -60,7 +63,6 @@ def run_snapshot():
         df_hist = pd.DataFrame(response_hist.data)
         
         if not df_hist.empty and "Total_Apports_nets" in df_hist.columns:
-            # On prend la toute dernière valeur enregistrée dans l'historique
             capital_investi = extraire_nombre(df_hist["Total_Apports_nets"].iloc[-1])
             print(f"💰 Capital récupéré depuis l'Historique : {capital_investi} $")
         else:
@@ -71,10 +73,9 @@ def run_snapshot():
     except Exception as e:
         print(f"⚠️ Erreur lors de la lecture du Capital : {e}")
 
-# 3. 📸 ÉCRITURE DE LA PHOTO DANS LA TABLE "Projections"
+    # 3. 📸 ÉCRITURE DE LA PHOTO DANS LA TABLE "Projections"
     date_aujourdhui = datetime.date.today().strftime("%d/%m/%Y")
     
-    # 🛠️ CORRECTION APPLIQUÉE : "Total Global" et "Actifs Stratégiques" avec les bonnes majuscules
     nouvelle_photo = {
         "Date": date_aujourdhui,
         "Total Global": total_global,
@@ -83,9 +84,14 @@ def run_snapshot():
     }
 
     try:
-        # 🛠️ ON FORCE L'INSERTION POUR LE TEST (Sécurité doublon désactivée)
-        supabase.table("Projections").insert(nouvelle_photo).execute()
-        print(f"✅ TEST REUSSI : Photo du {date_aujourdhui} enregistrée avec succès !")
+        # ✅ CORRECTION : Vérifie si une entrée existe déjà pour aujourd'hui
+        existing = supabase.table("Projections").select("id").eq("Date", date_aujourdhui).execute()
+        if existing.data:
+            supabase.table("Projections").update(nouvelle_photo).eq("Date", date_aujourdhui).execute()
+            print(f"✅ Mise à jour : Photo du {date_aujourdhui} actualisée avec succès !")
+        else:
+            supabase.table("Projections").insert(nouvelle_photo).execute()
+            print(f"✅ Nouvelle photo : {date_aujourdhui} enregistrée avec succès !")
     except Exception as e:
         print(f"❌ Erreur lors de l'enregistrement dans Projections : {e}")
 
