@@ -5,3 +5,4 @@ yfinance
 plotly
 streamlit-autorefresh
 supabase
+httpx
