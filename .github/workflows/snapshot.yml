@@ -20,10 +20,16 @@ jobs:
 
       - name: Installer les dépendances nécessaires
         run: |
-          pip install pandas supabase
+          pip install pandas numpy yfinance supabase
 
       - name: Lancer le script de capture
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python take_snapshot.py
+
+      - name: Calculer les performances TWR
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python calc_perf.py
