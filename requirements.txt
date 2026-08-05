@@ -3,7 +3,5 @@ pandas
 numpy
 yfinance
 plotly
-streamlit-autorefresh
 supabase
-httpx
-starlette<1.4.0
+streamlit-autorefresh
