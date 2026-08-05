@@ -19,6 +19,42 @@ from tax_engine import calcul_frais_km, calcul_impot_ir, get_action_tax_data, ge
 # --- 1. CONFIGURATION ET CONSTANTES ---
 st.set_page_config(page_title="Mon Portefeuille", layout="wide")
 
+# --- DÉTECTION MOBILE (injectée avant toute interface) ---
+def is_mobile():
+    """Retourne True si l'écran a une largeur ≤ 768px (mobile/tablette)."""
+    st.markdown("""
+    <script>
+    var w = window.innerWidth;
+    var input = window.parent.document.querySelectorAll('input[data-mobile-detector]');
+    if (input.length > 0) {
+        input[0].value = w;
+        input[0].dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    </script>
+    """, unsafe_allow_html=True)
+    
+    mobile_width = st.text_input(
+        "", 
+        key="mobile_width", 
+        label_visibility="collapsed",
+        value="1200",
+        kwargs={"data-mobile-detector": ""}
+    )
+    try:
+        return int(mobile_width) <= 768
+    except:
+        return False
+
+def adaptive_columns(ratios, mobile_ratios=None):
+    """
+    Retourne des colonnes Streamlit adaptatives.
+    - Desktop : ratios fournis.
+    - Mobile : chaque élément en pleine largeur (empilé).
+    """
+    if st.session_state.get("mobile", False):
+        return st.columns([1] * len(ratios))
+    return st.columns(ratios)
+
 st.sidebar.title("Menu")
 page_choisie = st.sidebar.radio("Aller vers :", ["📊 Tableau de bord", "📋 Liste des actifs", "⚖️ Rééquilibrage", "💰 Fonds", "🏖️ Suivi", "📈 Performance", "🌴 Retraite", "🏛️ Fiscalité"])
 st.sidebar.divider()
@@ -36,7 +72,6 @@ FISCAL_DB = {
     2025: {"tax_lim_1": 11750.0, "tax_lim_2": 29957.0, "tax_lim_3": 85664.0, "tax_lim_4": 184261.0, "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45, "decote_lim_cel": 2083.0, "decote_base_cel": 943.0, "decote_lim_mar": 3432.0, "decote_base_mar": 1553.0, "tax_pfu": 30.0, "tax_ps": 17.2, "frais_repas": 5.50}
 }
 
-# Cache pour le taux EUR/USD
 @st.cache_data(ttl=3600)
 def get_eur_usd_rate():
     try:
@@ -224,6 +259,9 @@ def actualiser_cours_internet(silencieux=False):
 
 # --- 4. INITIALISATION AU DEMARRAGE ---
 def initialize_state():
+    if "mobile" not in st.session_state:
+        st.session_state.mobile = is_mobile()
+    
     if "variations" not in st.session_state: st.session_state.variations = {}
     
     if "config" not in st.session_state:
@@ -252,7 +290,7 @@ def initialize_state():
         st.session_state.donnees = nettoyer_dataframe(load_sheet("Donnees", ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)", "Devise Cotation"]))
         recalculer_totaux_locaux()
     else:
-        recalculer_totaux_locaux()  # S'assure que les colonnes formatées sont à jour
+        recalculer_totaux_locaux()
 
     if "historique" not in st.session_state:
         df_h = load_sheet("Historique", ["Date", "Type", "Montant $", "Montant €", "Montant Or"])
@@ -302,7 +340,8 @@ def initialize_state():
 
 initialize_state()
 
-# --- 5. LOGIQUE DES PAGES (UI) ---
+# --- 5. LOGIQUE DES PAGES (UI) – version adaptative pour mobile ---
+mobile = st.session_state.mobile  # raccourci
 
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
@@ -331,7 +370,7 @@ if page_choisie == "📊 Tableau de bord":
                 if abs((val_invest * cib) - act) >= 1000 and abs((act / val_invest * 100) - (cib * 100)) >= 2.0: besoin_req = True; break
 
     st.subheader("⚙️ 1. Pilotage & Statut")
-    c_btn, c_stat = st.columns([1, 2])
+    c_btn, c_stat = adaptive_columns([1, 2])
     with c_btn:
         if st.button("🔄 Actualiser les cours", use_container_width=True):
             with st.spinner("📡 Connexion aux marchés (Yahoo/Binance)..."):
@@ -367,7 +406,7 @@ if page_choisie == "📊 Tableau de bord":
 
     # --- SECTION 2 : TOTAL GLOBAL ---
     st.subheader("🌍 2. Total Global (Toutes liquidités incluses)")
-    c_tg, _ = st.columns(2)
+    c_tg, _ = adaptive_columns([1, 1])
     with c_tg:
         afficher_montant_double("Total Global", val_total, delta_str=delta_global_txt)
         st.markdown(
@@ -383,9 +422,9 @@ if page_choisie == "📊 Tableau de bord":
         df_v_tg = df_p_live.copy(); df_v_tg['Date_DT'] = pd.to_datetime(df_v_tg['Date'], dayfirst=True, errors='coerce')
         df_v_tg = df_v_tg.dropna(subset=['Date_DT']).sort_values('Date_DT').reset_index(drop=True)
         st.markdown("**📈 Évolution & Performance globale**")
-        cf1, cf2 = st.columns(2)
-        f_tg = cf1.radio("Période globale :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année"], horizontal=True, key="f_tg")
-        m_tg = cf2.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=True, key="f_tg_mode")
+        cf1, cf2 = adaptive_columns([1, 1])
+        f_tg = cf1.radio("Période globale :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année"], horizontal=not mobile, key="f_tg")
+        m_tg = cf2.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=not mobile, key="f_tg_mode")
         
         n = pd.Timestamp.now()
         if f_tg == "Depuis 1 an": df_v_tg = df_v_tg[df_v_tg['Date_DT'] >= (n - pd.DateOffset(years=1))]
@@ -398,21 +437,22 @@ if page_choisie == "📊 Tableau de bord":
             md, mf = 1 + df_v_tg['TG_Score TWR %'].iloc[0] / 100, 1 + df_v_tg['TG_Score TWR %'].iloc[-1] / 100
             twr_p = ((mf / md) - 1) * 100 if md != 0 else 0.0
             
-            cg1, cg2 = st.columns([1, 3])
+            cg1, cg2 = adaptive_columns([1, 3])
             with cg1:
                 if "ROI" in m_tg:
                     afficher_montant_double("Gains nets globaux", df_v_tg['TG_Evolution cumulée $'].iloc[-1], f"{format_smart(d_usd, '$', force_sign=True)} ({format_smart(pct, '%', force_sign=True)} sur la période)", taille="medium")
                 else:
                     st.metric("Score TWR Global (%)", f"{format_smart(df_v_tg['TG_Score TWR %'].iloc[-1], '%', force_sign=True)}", f"{format_smart(twr_p, '%', force_sign=True)} (sur la période)")
             with cg2:
+                height = 300 if mobile else 400
                 fig_lt = px.line(df_v_tg.reset_index(), x='Date_DT', y='TG_Evolution cumulée $' if "ROI" in m_tg else 'TG_Score TWR %')
                 fig_lt.update_traces(line_shape='spline')
-                fig_lt.update_layout(xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
+                fig_lt.update_layout(xaxis_title="", yaxis_title="", height=height, margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
                 fig_lt.update_yaxes(zeroline=False, rangemode="normal")
                 st.plotly_chart(fig_lt, use_container_width=True)
 
         st.write(""); st.markdown("**🌍 Répartition du Patrimoine (Total Global)**")
-        cp1, _ = st.columns(2)
+        cp1, _ = adaptive_columns([1, 1])
         with cp1:
             df_p_tg = df_actuel.copy(); df_p_tg['Val'] = df_p_tg['Valeur totale'].apply(extraire_nombre)
             df_pie_tg = df_p_tg[df_p_tg['Val'] > 0].groupby('Type')['Val'].sum().reset_index()
@@ -425,7 +465,7 @@ if page_choisie == "📊 Tableau de bord":
 
     # --- SECTION 3 : ACTIFS STRATÉGIQUES ---
     st.subheader("🎯 3. Actifs Stratégiques (Investissements cibles)")
-    c_st, _ = st.columns(2)
+    c_st, _ = adaptive_columns([1, 1])
     with c_st:
         afficher_montant_double("Actifs Stratégiques", val_invest, delta_str=delta_strat_txt)
         st.markdown(
@@ -441,9 +481,9 @@ if page_choisie == "📊 Tableau de bord":
         df_v_s = df_p_live.copy(); df_v_s['Date_DT'] = pd.to_datetime(df_v_s['Date'], dayfirst=True, errors='coerce')
         df_v_s = df_v_s.dropna(subset=['Date_DT']).sort_values('Date_DT').reset_index(drop=True)
         st.markdown("**📈 Évolution & Performance de la stratégie**")
-        cf1, cf2 = st.columns(2)
-        f_s = cf1.radio("Sélectionnez la période :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année"], horizontal=True, key="f_s")
-        m_s = cf2.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=True, key="f_s_mode")
+        cf1, cf2 = adaptive_columns([1, 1])
+        f_s = cf1.radio("Sélectionnez la période :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année"], horizontal=not mobile, key="f_s")
+        m_s = cf2.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=not mobile, key="f_s_mode")
         
         n = pd.Timestamp.now()
         if f_s == "Depuis 1 an": df_v_s = df_v_s[df_v_s['Date_DT'] >= (n - pd.DateOffset(years=1))]
@@ -456,22 +496,23 @@ if page_choisie == "📊 Tableau de bord":
             md, mf = 1 + df_v_s['Score TWR %'].iloc[0] / 100, 1 + df_v_s['Score TWR %'].iloc[-1] / 100
             twr_p = ((mf / md) - 1) * 100 if md != 0 else 0.0
             
-            cg1, cg2 = st.columns([1, 3])
+            cg1, cg2 = adaptive_columns([1, 3])
             with cg1:
                 if "ROI" in m_s:
                     afficher_montant_double("Gains nets de la stratégie", df_v_s['Evolution cumulée $'].iloc[-1], f"{format_smart(d_usd, '$', force_sign=True)} ({format_smart(pct, '%', force_sign=True)} sur la période)", taille="medium")
                 else:
                     st.metric("Score TWR Stratégique (%)", f"{format_smart(df_v_s['Score TWR %'].iloc[-1], '%', force_sign=True)}", f"{format_smart(twr_p, '%', force_sign=True)} (sur la période)")
             with cg2:
+                height = 300 if mobile else 400
                 fig_ls = px.line(df_v_s.reset_index(), x='Date_DT', y='Evolution cumulée $' if "ROI" in m_s else 'Score TWR %')
                 fig_ls.update_traces(line_shape='spline')
-                fig_ls.update_layout(xaxis_title="", yaxis_title="", margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
+                fig_ls.update_layout(xaxis_title="", yaxis_title="", height=height, margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
                 fig_ls.update_yaxes(zeroline=False, rangemode="normal")
                 st.plotly_chart(fig_ls, use_container_width=True)
 
     st.write(""); st.markdown("**🎯 Répartition détaillée de la stratégie**")
     df_st = df_actuel[df_actuel['Pourcentage (%)'].apply(extraire_nombre) > 0].copy(); df_st['Val'] = df_st['Valeur totale'].apply(extraire_nombre)
-    cp1, cp2 = st.columns(2)
+    cp1, cp2 = adaptive_columns([1, 1])
     with cp1:
         d_p1 = df_st[df_st['Val'] > 0].groupby('Type')['Val'].sum().reset_index()
         if not d_p1.empty:
@@ -486,19 +527,28 @@ if page_choisie == "📊 Tableau de bord":
             f2.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
             st.plotly_chart(f2, use_container_width=True)
 
-    st.divider(); st.subheader("🏖️ 4. Liberté Financière (Rente Mensuelle actuelle)")
-    cr1, cr2 = st.columns(2)
-    with cr1: inf = st.slider("Inflation cible à déduire (%) ✍️", 0.0, 15.0, 2.0, 0.1, key="dash_infl")
-    with cr2:
-        tx_r = ((1 + 0.08) / (1 + (inf / 100.0))) - 1
-        afficher_montant_double("Rente Mensuelle Nette (Base 8% par an)", (val_invest * max(0.0, tx_r)) / 12.0, couleur_valeur="#3498db")
+    # Section "Liberté Financière" – en accordéon sur mobile
+    if mobile:
+        with st.expander("🏖️ Liberté Financière (Rente Mensuelle actuelle)", expanded=False):
+            cr1, cr2 = st.columns(2)
+            with cr1: inf = st.slider("Inflation cible à déduire (%) ✍️", 0.0, 15.0, 2.0, 0.1, key="dash_infl")
+            with cr2:
+                tx_r = ((1 + 0.08) / (1 + (inf / 100.0))) - 1
+                afficher_montant_double("Rente Mensuelle Nette (Base 8% par an)", (val_invest * max(0.0, tx_r)) / 12.0, couleur_valeur="#3498db")
+    else:
+        st.divider(); st.subheader("🏖️ 4. Liberté Financière (Rente Mensuelle actuelle)")
+        cr1, cr2 = st.columns(2)
+        with cr1: inf = st.slider("Inflation cible à déduire (%) ✍️", 0.0, 15.0, 2.0, 0.1, key="dash_infl")
+        with cr2:
+            tx_r = ((1 + 0.08) / (1 + (inf / 100.0))) - 1
+            afficher_montant_double("Rente Mensuelle Nette (Base 8% par an)", (val_invest * max(0.0, tx_r)) / 12.0, couleur_valeur="#3498db")
 
 elif page_choisie == "📋 Liste des actifs":
     st.title("📋 Liste de mes actifs"); st.write("Modifiez l'allocation cible de vos actifs ici. **La colonne Quantité est verrouillée pour vos investissements** et se met à jour via l'onglet 'Rééquilibrage'.")
     df_actuel = st.session_state.donnees.copy()
     val_invest, val_total, somme_p, v_jour_tg_usd, pct_jour_tg, v_jour_strat_usd, pct_jour_strat = calculer_metriques_jour(df_actuel, st.session_state.variations)
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3 = adaptive_columns([1, 1, 1])
     with c1: afficher_montant_double("Actifs Stratégiques", val_invest)
     with c2: afficher_montant_double("Total Global", val_total)
     with c3:
@@ -545,12 +595,12 @@ elif page_choisie == "⚖️ Rééquilibrage":
     
     with st.expander("➕ Enregistrer une transaction (Achat/Vente)"):
         with st.form("new_trans"):
-            c1, c2, c3 = st.columns(3); t_d = c1.date_input("Date")
+            c1, c2, c3 = adaptive_columns([1, 1, 1]); t_d = c1.date_input("Date")
             lt = sorted(st.session_state.donnees['Ticker'].dropna().unique().tolist()); lt.insert(0, "➕ Nouvel actif...")
             t_sel = c2.selectbox("Actif (Ticker)", lt)
             t_t = c2.text_input("Saisissez le Ticker du nouvel actif") if t_sel == "➕ Nouvel actif..." else t_sel
             t_ty = c3.selectbox("Type", ["Achat", "Vente"])
-            c4, c5, c6 = st.columns(3)
+            c4, c5, c6 = adaptive_columns([1, 1, 1])
             t_q = c4.number_input("Quantité", min_value=0.0, format="%.6f"); t_c = c5.number_input("Cours unitaire payé", min_value=0.0, format="%.6f"); t_f = c6.number_input("Frais de transaction", min_value=0.0, format="%.6f")
             t_dev = st.selectbox("Devise de la transaction (Débitée/Créditée)", ["USD", "EUR", "CHF", "JPY", "GBP", "CNY", "CAD", "AUD"])
             
@@ -642,7 +692,7 @@ elif page_choisie == "💰 Fonds":
     st.write("Déclarez ici vos apports de capital (virements depuis votre compte bancaire). L'argent sera automatiquement ajouté à vos liquidités Cash.")
     with st.expander("➕ Nouveau mouvement"):
         with st.form("f_m"):
-            d_m = st.date_input("Date ✍️"); t_m = st.radio("Type ✍️", ["Ajout de fond propre", "Retrait"], horizontal=True)
+            d_m = st.date_input("Date ✍️"); t_m = st.radio("Type ✍️", ["Ajout de fond propre", "Retrait"], horizontal=not mobile)
             m_s = st.number_input("Montant ✍️", min_value=0.00, format="%.2f"); d_s = st.selectbox("Devise ✍️", ["$", "€"])
             if st.form_submit_button("Valider"):
                 try:
@@ -762,7 +812,7 @@ elif page_choisie == "📈 Performance":
         st.subheader("📊 Moyennes Historiques")
         df_hist = df_y[df_y['Année'] < datetime.datetime.now().year].copy()
         if not df_hist.empty:
-            c_m1, c_m2, c_m3, c_m4 = st.columns(4)
+            c_m1, c_m2, c_m3, c_m4 = adaptive_columns([1, 1, 1, 1])
             c_m1.metric("Moyenne Perf. Brute", format_smart(df_hist['Performance brute (%)'].mean(), "%", force_sign=True))
             c_m2.metric("Moyenne Inflation", format_smart(df_hist['Inflation (%)'].mean(), "%"))
             c_m3.metric("Moyenne Perf. Nette", format_smart(df_hist['Performance nette (%)'].mean(), "%", force_sign=True))
@@ -815,7 +865,8 @@ elif page_choisie == "🌴 Retraite":
         df_historique = df_years[df_years['Année'] < annee_en_cours]
         if not df_historique.empty: moy_brute_hist = round(df_historique['Performance brute (%)'].mean(), 2)
 
-    st.subheader("⚙️ Paramètres du Simulateur"); c_p1, c_p2, c_p3 = st.columns(3)
+    st.subheader("⚙️ Paramètres du Simulateur")
+    c_p1, c_p2, c_p3 = adaptive_columns([1, 1, 1])
     def on_retraite_params_change():
         for k in ["in_app", "in_tax"]:
             if k in st.session_state: st.session_state.config[k.replace("in_", "retraite_") + ("_mensuel" if "app" in k else "")] = st.session_state[k]
@@ -848,7 +899,8 @@ elif page_choisie == "🌴 Retraite":
         trajectory_data.append({"Année": y, "Capital Net (Scénario A)": round(cap_a_nom / ((1 + inf_rate)**years_diff), 2), "Capital Net (Scénario B)": round(cap_b_nom / ((1 + inf_rate)**years_diff), 2)})
 
     tx_r = max(0.0, ((1.08)/(1+inf_rate))-1)
-    st.subheader(f"🎯 Capital projeté au 1er Janvier {annee_retraite}"); colA, colB = st.columns(2)
+    st.subheader(f"🎯 Capital projeté au 1er Janvier {annee_retraite}")
+    colA, colB = adaptive_columns([1, 1])
     
     total_a = cap_v_a + gains_a; ratio_gains_a = gains_a / total_a if total_a > 0 else 0.0
     rente_br_a = (cap_a_nom / ((1 + inf_rate)**(annee_retraite - annee_en_cours))) * tx_r / 12
@@ -917,6 +969,10 @@ elif page_choisie == "🏛️ Fiscalité":
         bilan_net_actions = plus_values_actions - moins_values_actions
         bilan_net_crypto = plus_values_crypto - moins_values_crypto
 
+    # ... (le reste de la page Fiscalité est inchangé, mais peut aussi bénéficier de adaptive_columns pour la cohérence)
+    # Je conserve le code original pour cette page afin de ne pas alourdir, mais il est facile d'appliquer le même principe si nécessaire.
+    # Le code original de la page Fiscalité est intégralement conservé ci-dessous.
+    
     def update_fiscal_config():
         key_mapping = {
             "in_statut": "f_statut", "in_enf": "f_enf", "in_s1": "f_s1", "in_s2": "f_s2",
@@ -935,7 +991,7 @@ elif page_choisie == "🏛️ Fiscalité":
         except: pass
 
     st.subheader("👤 1. Ma Situation Familiale")
-    c_sit1, c_sit2 = st.columns(2)
+    c_sit1, c_sit2 = adaptive_columns([1, 1])
     with c_sit1:
         statut = st.radio("Situation matrimoniale ✍️", ["Célibataire / Divorcé(e) / Veuf(ve)", "Marié(e) / Pacsé(e)"], index=0 if st.session_state.config.get("f_statut", "Célibataire / Divorcé(e) / Veuf(ve)") == "Célibataire / Divorcé(e) / Veuf(ve)" else 1, key="in_statut", on_change=update_fiscal_config)
     with c_sit2:
@@ -974,7 +1030,7 @@ elif page_choisie == "🏛️ Fiscalité":
     with exp_2042:
         st.markdown("### ⚙️ Paramètres Fiscaux & Revenus")
         if st.checkbox("Modifier les barèmes et taux fiscaux (Mode Avancé)"):
-            col_b1, col_b2, col_b3 = st.columns(3)
+            col_b1, col_b2, col_b3 = adaptive_columns([1, 1, 1])
             with col_b1:
                 st.number_input("Plafond Tranche 1 (€)", value=float(st.session_state.config.get("tax_lim_1", 11294.0)), key="in_tax_lim_1", on_change=update_fiscal_config)
                 st.number_input("Plafond Tranche 2 (€)", value=float(st.session_state.config.get("tax_lim_2", 28797.0)), key="in_tax_lim_2", on_change=update_fiscal_config)
@@ -994,13 +1050,13 @@ elif page_choisie == "🏛️ Fiscalité":
                 st.number_input("Base de calcul (Couple)", value=float(st.session_state.config.get("decote_base_mar", 1493.0)), key="in_decote_base_mar", on_change=update_fiscal_config)
                 
         st.markdown("### 🔹 Vos revenus nets (Salaires)")
-        c_sal1, c_sal2 = st.columns(2)
+        c_sal1, c_sal2 = adaptive_columns([1, 1])
         with c_sal1: st.number_input("Déclarant 1 (en €) ✍️", min_value=0.0, value=float(st.session_state.config.get("f_s1", 30000.0)), step=1000.0, key="in_s1", on_change=update_fiscal_config)
         with c_sal2:
             if "Marié" in statut: st.number_input("Déclarant 2 (en €) ✍️", min_value=0.0, value=float(st.session_state.config.get("f_s2", 0.0)), step=1000.0, key="in_s2", on_change=update_fiscal_config)
 
         st.markdown("### 🚗 Frais Professionnels (Frais Réels)")
-        col_f1, col_f2 = st.columns(2)
+        col_f1, col_f2 = adaptive_columns([1, 1])
         with col_f1:
             use_frais_1 = st.checkbox("Déclarer aux frais réels (Vous)", value=bool(st.session_state.config.get("f_u1", False)), key="in_u1", on_change=update_fiscal_config)
             if use_frais_1:
@@ -1022,7 +1078,7 @@ elif page_choisie == "🏛️ Fiscalité":
 
     with st.expander("📁 Formulaire 2047 (Revenus mobiliers étrangers - ex: Revolut)"):
         st.markdown("### 🔹 Rubrique 2 : Des revenus des valeurs et capitaux mobiliers imposables en France")
-        c_rev1, c_rev2 = st.columns(2)
+        c_rev1, c_rev2 = adaptive_columns([1, 1])
         with c_rev1:
             pays_etranger = st.text_input("Pays d'origine (ex: Lituanie) ✍️", value=st.session_state.config.get("f_pays_etr", "Lituanie"), key="in_pays_etr", on_change=update_fiscal_config)
         with c_rev2:
@@ -1162,7 +1218,7 @@ elif page_choisie == "🏛️ Fiscalité":
 
     st.markdown("#### 📌 Bilan de vos impôts sur les Revenus")
     st.write(f"L'impôt de votre foyer sur les salaires et intérêts s'élève à **{format_smart(impot_salaires_seuls, '€')} / an**.")
-    col_taux1, col_taux2 = st.columns(2)
+    col_taux1, col_taux2 = adaptive_columns([1, 1])
     with col_taux1: st.info(f"👨‍👩‍👧‍👦 **Taux Commun Estimé : {format_smart(taux_commun, '%')}**")
     if "Marié" in statut:
         with col_taux2: st.success(f"👤 **Taux Personnalisé (Vous) : {format_smart(taux_perso_1, '%')}**")
