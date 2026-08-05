@@ -384,12 +384,16 @@ if page_choisie == "📊 Tableau de bord":
         df_v_tg = df_v_tg.dropna(subset=['Date_DT']).sort_values('Date_DT').reset_index(drop=True)
         st.markdown("**📈 Évolution & Performance globale**")
         cf1, cf2 = st.columns(2)
-        f_tg = cf1.radio("Période globale :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année"], horizontal=True, key="f_tg")
+        f_tg = cf1.radio("Période globale :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année", "Depuis le début du mois"], horizontal=True, key="f_tg")
         m_tg = cf2.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=True, key="f_tg_mode")
         
         n = pd.Timestamp.now()
-        if f_tg == "Depuis 1 an": df_v_tg = df_v_tg[df_v_tg['Date_DT'] >= (n - pd.DateOffset(years=1))]
-        elif f_tg == "Depuis le début de l'année": df_v_tg = df_v_tg[df_v_tg['Date_DT'] >= pd.Timestamp(year=n.year - 1, month=12, day=31)]
+        if f_tg == "Depuis 1 an":
+            df_v_tg = df_v_tg[df_v_tg['Date_DT'] >= (n - pd.DateOffset(years=1))]
+        elif f_tg == "Depuis le début de l'année":
+            df_v_tg = df_v_tg[df_v_tg['Date_DT'] >= pd.Timestamp(year=n.year - 1, month=12, day=31)]
+        elif f_tg == "Depuis le début du mois":
+            df_v_tg = df_v_tg[df_v_tg['Date_DT'] >= n.replace(day=1, hour=0, minute=0, second=0, microsecond=0)]
             
         if not df_v_tg.empty:
             df_v_tg.set_index('Date_DT', inplace=True)
@@ -442,12 +446,16 @@ if page_choisie == "📊 Tableau de bord":
         df_v_s = df_v_s.dropna(subset=['Date_DT']).sort_values('Date_DT').reset_index(drop=True)
         st.markdown("**📈 Évolution & Performance de la stratégie**")
         cf1, cf2 = st.columns(2)
-        f_s = cf1.radio("Sélectionnez la période :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année"], horizontal=True, key="f_s")
+        f_s = cf1.radio("Sélectionnez la période :", ["Depuis le début", "Depuis 1 an", "Depuis le début de l'année", "Depuis le début du mois"], horizontal=True, key="f_s")
         m_s = cf2.radio("Affichage :", ["Rendement Absolu (ROI)", "Score TWR (Talent)"], horizontal=True, key="f_s_mode")
         
         n = pd.Timestamp.now()
-        if f_s == "Depuis 1 an": df_v_s = df_v_s[df_v_s['Date_DT'] >= (n - pd.DateOffset(years=1))]
-        elif f_s == "Depuis le début de l'année": df_v_s = df_v_s[df_v_s['Date_DT'] >= pd.Timestamp(year=n.year - 1, month=12, day=31)]
+        if f_s == "Depuis 1 an":
+            df_v_s = df_v_s[df_v_s['Date_DT'] >= (n - pd.DateOffset(years=1))]
+        elif f_s == "Depuis le début de l'année":
+            df_v_s = df_v_s[df_v_s['Date_DT'] >= pd.Timestamp(year=n.year - 1, month=12, day=31)]
+        elif f_s == "Depuis le début du mois":
+            df_v_s = df_v_s[df_v_s['Date_DT'] >= n.replace(day=1, hour=0, minute=0, second=0, microsecond=0)]
             
         if not df_v_s.empty:
             df_v_s.set_index('Date_DT', inplace=True)
