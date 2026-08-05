@@ -116,7 +116,6 @@ def _fetch_fiscal_bars(year):
 
 # --- FONCTIONS DE CALCUL PARTAGÉES ---
 def calculer_performances_annuelles():
-    """Calcule les performances annuelles et les stocke dans st.session_state."""
     if "perf_data" not in st.session_state:
         df_p = st.session_state.projections
         annee_en_cours = datetime.datetime.now().year
@@ -796,39 +795,32 @@ elif page_choisie == "🌴 Retraite":
         taxe_plus_value = st.number_input("Flat Tax (%) ✍️",min_value=0.00,max_value=60.00,step=0.10,value=float(st.session_state.config.get("retraite_taxe",float(st.session_state.config.get("tax_pfu",30.0)))),key="in_tax",on_change=on_retraite_params_change)
     st.divider()
 
-    # --- SIMULATION ---
-    cap_v_a = cap_v_b = capital_initial; gains_a = gains_b = 0.0
-    app_a = app_b = apport_mensuel
-    inf_rate_a = inflation_a/100.0; inf_rate_b = inflation_estimee/100.0
-    r_a = rendement_a/100.0; r_b = rendement_b/100.0
-    r_a_m = (1+r_a)**(1/12)-1; r_b_m = (1+r_b)**(1/12)-1
+    # --- SIMULATION CORRIGÉE ---
+    cap_v_a = cap_v_b = capital_initial
+    inf_rate_a = inflation_a/100.0
+    inf_rate_b = inflation_estimee/100.0
+    inf_rate_apports = inflation_estimee/100.0  # Même inflation pour les apports
+    r_a = rendement_a/100.0
+    r_b = rendement_b/100.0
+    r_a_m = (1+r_a)**(1/12)-1
+    r_b_m = (1+r_b)**(1/12)-1
 
-     # Total des apports passés
     total_apports_passes = sum(r["Montant $"] if "ajout" in r["Type"].lower() else -r["Montant $"] for _,r in st.session_state.historique.iterrows())
-    
-    # Apports futurs (identiques pour les deux scénarios)
     total_apports_futurs = 0
     app_temp = apport_mensuel
     
     trajectory_data = []
     for y in range(annee_en_cours, annee_retraite):
         mois_dans_annee = 12 if y>annee_en_cours else max(1,13-datetime.datetime.now().month)
-        
         for _ in range(mois_dans_annee):
-            # Ajouter l'apport du mois (identique pour A et B)
             cap_v_a += app_temp
             cap_v_b += app_temp
             total_apports_futurs += app_temp
-            
-            # Calculer les intérêts (différents selon le scénario)
             int_a = cap_v_a * r_a_m
             int_b = cap_v_b * r_b_m
             cap_v_a += int_a
             cap_v_b += int_b
-        
-        # L'apport mensuel augmente avec l'inflation des apports (identique)
         app_temp *= (1+inf_rate_apports)
-        
         years_diff = y-annee_en_cours+1
         trajectory_data.append({
             "Année":y,
@@ -839,8 +831,7 @@ elif page_choisie == "🌴 Retraite":
     years_diff = annee_retraite-annee_en_cours
     cap_a_nom = cap_v_a
     cap_b_nom = cap_v_b
-
-    total_apports = total_apports_passes+total_apports_futurs  # Identique pour A et B
+    total_apports = total_apports_passes+total_apports_futurs
 
     tx_r_a = max(0.0,((1.08)/(1+inf_rate_a))-1)
     tx_r_b = max(0.0,((1.08)/(1+inf_rate_b))-1)
@@ -870,7 +861,7 @@ elif page_choisie == "🌴 Retraite":
 
     # --- SCÉNARIO B ---
     total_b = cap_v_b
-    plus_value_b = max(0,total_b-total_apports)  # Même total_apports que A
+    plus_value_b = max(0,total_b-total_apports)
     part_plus_value_b = (plus_value_b/total_b*100) if total_b>0 else 0
     rente_br_b = (cap_b_nom/((1+inf_rate_b)**years_diff))*tx_r_b/12
     impot_b = rente_br_b*(part_plus_value_b/100)*(taxe_plus_value/100)
@@ -881,7 +872,7 @@ elif page_choisie == "🌴 Retraite":
         afficher_montant_double("💰 Capital Brut Final",cap_b_nom)
         afficher_montant_double("🛒 Capital Net (pouvoir d'achat)",cap_b_nom/((1+inf_rate_b)**years_diff))
         st.write("")
-        afficher_montant_double("📥 Total Apports",total_apports,couleur_valeur="#95a5a6")  # Identique
+        afficher_montant_double("📥 Total Apports",total_apports,couleur_valeur="#95a5a6")
         afficher_montant_double("📈 Plus-Value",plus_value_b,couleur_valeur="#3498db")
         st.metric("📊 Part Plus-Value",f"{format_smart(part_plus_value_b,'%')}")
         st.write("")
@@ -914,7 +905,6 @@ elif page_choisie == "🏛️ Fiscalité":
                 if f"in_{k}" in st.session_state: st.session_state[f"in_{k}"] = v
         annee_fiscale = st.selectbox("📅 Année des revenus :",annees_dispos,index=idx_defaut,key="annee_fiscale_select",on_change=on_year_change)
         
-        # Bannière
         bars,source,fiabilite = get_fiscal_bars_for_year(annee_fiscale)
         if fiabilite=="Officielle": emoji,border_color,message = "🟢","#28a745","Données fiscales officielles - Calcul fiable à 100%"
         elif fiabilite in ["Exacte (vérifiée)","Élevée"]: emoji,border_color,message = "🟢","#28a745","Barèmes vérifiés - Calcul fiable"
