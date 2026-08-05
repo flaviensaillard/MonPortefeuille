@@ -139,16 +139,21 @@ def _fetch_fiscal_bars(year):
     bars['_year'] = year
     return bars
 
-# --- FONCTIONS DE CALCUL PARTAGÉES ---
-def get_moyenne_performance_brute():
-    """Calcule la performance brute moyenne historique (identique à la page Performance)."""
-    if "moyenne_perf_brute_cache" not in st.session_state:
+# --- FONCTIONS DE CALCUL PARTAGÉES (stockées dans st.session_state) ---
+def calculer_performances_annuelles():
+    """Calcule les performances annuelles et les stocke dans st.session_state."""
+    if "perf_data" not in st.session_state:
         df_p = st.session_state.projections
         annee_en_cours = datetime.datetime.now().year
         
         if df_p.empty:
-            st.session_state.moyenne_perf_brute_cache = 5.00
-            return 5.00
+            st.session_state.perf_data = {
+                "df_y": pd.DataFrame(),
+                "perf_brutes": [],
+                "moyenne_brute": 5.00,
+                "moyenne_inflation": 2.00
+            }
+            return
         
         df_viz = df_p.copy()
         df_viz = df_viz.dropna(subset=['Date']).sort_values('Date')
@@ -174,37 +179,52 @@ def get_moyenne_performance_brute():
         df_y['Année'] = df_y['Année'].astype(int)
         df_y['Performance brute (%)'] = perf_brutes
         
-        df_hist = df_y[df_y['Année'] < annee_en_cours]
+        # Première année partielle : annualisation
+        jours_annee_1 = (df_viz[df_viz['Année'] == df_viz['Date_DT'].min().year]['Date_DT'].max() - df_viz['Date_DT'].min()).days
+        if jours_annee_1 > 0 and jours_annee_1 < 330 and not df_y[df_y['Année'] == df_viz['Date_DT'].min().year].empty:
+            perf_prem_annee = df_y.loc[df_y['Année'] == df_viz['Date_DT'].min().year, 'Performance brute (%)'].values[0]
+            df_y.loc[df_y['Année'] == df_viz['Date_DT'].min().year, 'Performance brute (%)'] = (((1 + perf_prem_annee / 100.0) ** (365.25 / jours_annee_1)) - 1) * 100.0
         
-        if not df_hist.empty:
-            moyenne = round(df_hist['Performance brute (%)'].mean(), 2)
+        # Inflation
+        df_inf = st.session_state.inflation.copy()
+        if not df_inf.empty:
+            df_inf['Année'] = df_inf['Année'].astype(int)
+            df_y = df_y.merge(df_inf, on='Année', how='left').fillna({'Inflation (%)': 0.0})
         else:
-            moyenne = 5.00
+            df_y['Inflation (%)'] = 0.0
         
-        st.session_state.moyenne_perf_brute_cache = moyenne
-    
-    return st.session_state.moyenne_perf_brute_cache
+        df_y['Performance nette (%)'] = (((1 + df_y['Performance brute (%)'] / 100) / (1 + df_y['Inflation (%)'] / 100)) - 1) * 100
+        df_y['Gains Nets ($)'] = df_y['Evolution cumulée $'] - df_y['Evolution cumulée $'].shift(1).fillna(0)
+        
+        # Moyennes historiques (hors année en cours)
+        df_hist = df_y[df_y['Année'] < annee_en_cours]
+        moyenne_brute = round(df_hist['Performance brute (%)'].mean(), 2) if not df_hist.empty else 5.00
+        moyenne_inflation = round(df_hist['Inflation (%)'].mean(), 2) if not df_hist.empty else 2.00
+        
+        st.session_state.perf_data = {
+            "df_y": df_y,
+            "perf_brutes": perf_brutes,
+            "moyenne_brute": moyenne_brute,
+            "moyenne_inflation": moyenne_inflation
+        }
+
+def get_moyenne_performance_brute():
+    """Retourne la performance brute moyenne (identique partout)."""
+    if "perf_data" not in st.session_state:
+        calculer_performances_annuelles()
+    return st.session_state.perf_data["moyenne_brute"]
 
 def get_moyenne_inflation():
-    """Calcule l'inflation moyenne historique."""
-    if "moyenne_inflation_cache" not in st.session_state:
-        df_inf = st.session_state.inflation
-        annee_en_cours = datetime.datetime.now().year
-        
-        if df_inf.empty:
-            st.session_state.moyenne_inflation_cache = 2.00
-            return 2.00
-        
-        df_hist = df_inf[df_inf['Année'] < annee_en_cours]
-        
-        if not df_hist.empty:
-            moyenne = round(df_hist['Inflation (%)'].mean(), 2)
-        else:
-            moyenne = 2.00
-        
-        st.session_state.moyenne_inflation_cache = moyenne
-    
-    return st.session_state.moyenne_inflation_cache
+    """Retourne l'inflation moyenne (identique partout)."""
+    if "perf_data" not in st.session_state:
+        calculer_performances_annuelles()
+    return st.session_state.perf_data["moyenne_inflation"]
+
+def get_perf_data():
+    """Retourne toutes les données de performance (pour la page Performance)."""
+    if "perf_data" not in st.session_state:
+        calculer_performances_annuelles()
+    return st.session_state.perf_data
 
 @st.cache_data(ttl=3600)
 def get_eur_usd_rate():
@@ -547,10 +567,10 @@ def initialize_state():
         except Exception as e:
             logger.error(f"Erreur chargement transactions: {e}")
     
-    # Invalider les caches de calcul
-    for cache_key in ["moyenne_perf_brute_cache", "moyenne_inflation_cache"]:
-        if cache_key in st.session_state:
-            del st.session_state[cache_key]
+    # Calculer les performances une seule fois
+    if "perf_data" in st.session_state:
+        del st.session_state.perf_data
+    calculer_performances_annuelles()
     
     if "dernier_refresh_cours" not in st.session_state:
         st.session_state.dernier_refresh_cours = 0
@@ -912,46 +932,25 @@ elif page_choisie == "🏖️ Suivi":
 
 elif page_choisie == "📈 Performance":
     st.title("📈 Performances Annuelles & Inflation")
-    df_p = st.session_state.projections
-    if df_p.empty:
+    
+    # Récupérer les données pré-calculées
+    perf_data = get_perf_data()
+    df_y = perf_data["df_y"].copy()
+    
+    if df_y.empty:
         st.info("Aucune donnée.")
     else:
         try: or_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice', 2000.0))
         except: or_px = 2000.0
         
-        df_viz = df_p.copy(); df_viz['Date_DT'] = pd.to_datetime(df_viz['Date'], dayfirst=True, errors='coerce')
-        df_viz = df_viz.dropna(subset=['Date_DT']).sort_values('Date_DT')
-        df_viz['Année'] = df_viz['Date_DT'].dt.year
-        df_lasts = df_viz.groupby('Année').last().reset_index()
-        twr_fin_annee = dict(zip(df_lasts['Année'], df_lasts['Score TWR %']))
-        
-        perf_brutes = []
-        for _, row in df_lasts.iterrows():
-            annee_actuelle = row['Année']; twr_fin = row['Score TWR %']
-            if (annee_actuelle - 1) in twr_fin_annee:
-                twr_debut = twr_fin_annee[annee_actuelle - 1]
-                perf_annee = (((1 + twr_fin / 100) / (1 + twr_debut / 100)) - 1) * 100
-            else: perf_annee = twr_fin
-            perf_brutes.append(perf_annee)
-        
-        df_y = df_lasts.copy(); df_y['Année'] = df_y['Année'].astype(int); df_y['Performance brute (%)'] = perf_brutes
-        jours_annee_1 = (df_viz[df_viz['Année'] == df_viz['Date_DT'].min().year]['Date_DT'].max() - df_viz['Date_DT'].min()).days
-        if jours_annee_1 > 0 and jours_annee_1 < 330 and not df_y[df_y['Année'] == df_viz['Date_DT'].min().year].empty:
-            perf_prem_annee = df_y.loc[df_y['Année'] == df_viz['Date_DT'].min().year, 'Performance brute (%)'].values[0]
-            df_y.loc[df_y['Année'] == df_viz['Date_DT'].min().year, 'Performance brute (%)'] = (((1 + perf_prem_annee / 100.0) ** (365.25 / jours_annee_1)) - 1) * 100.0
-        
-        st.session_state.inflation['Année'] = st.session_state.inflation['Année'].astype(int)
-        df_y = df_y.merge(st.session_state.inflation, on='Année', how='left').fillna({'Inflation (%)': 0.0})
-        df_y['Performance nette (%)'] = (((1 + df_y['Performance brute (%)'] / 100) / (1 + df_y['Inflation (%)'] / 100)) - 1) * 100
-        df_y['Gains Nets ($)'] = df_y['Evolution cumulée $'] - df_y['Evolution cumulée $'].shift(1).fillna(0)
         df_y['Valeur Bilan (Or)'] = df_y['Actifs Stratégiques'] / or_px
         
         st.subheader("📊 Moyennes Historiques")
         df_hist = df_y[df_y['Année'] < datetime.datetime.now().year].copy()
         if not df_hist.empty:
             c_m1, c_m2, c_m3, c_m4 = st.columns(4)
-            c_m1.metric("Perf. Brute", format_smart(df_hist['Performance brute (%)'].mean(), "%", force_sign=True))
-            c_m2.metric("Inflation", format_smart(df_hist['Inflation (%)'].mean(), "%"))
+            c_m1.metric("Perf. Brute", format_smart(perf_data["moyenne_brute"], "%", force_sign=True))
+            c_m2.metric("Inflation", format_smart(perf_data["moyenne_inflation"], "%"))
             c_m3.metric("Perf. Nette", format_smart(df_hist['Performance nette (%)'].mean(), "%", force_sign=True))
             with c_m4: afficher_montant_double("Gains / An", df_hist['Gains Nets ($)'].mean(), taille="medium")
         else: st.info("Historique insuffisant.")
@@ -997,32 +996,29 @@ elif page_choisie == "🌴 Retraite":
         annee_retraite = st.number_input("Année de départ ✍️", min_value=annee_en_cours+1, max_value=2100, value=2055, step=1)
         apport_mensuel = st.number_input("Apport mensuel ($) ✍️", min_value=0.00, step=50.00, value=float(st.session_state.config.get("retraite_apport_mensuel", 250.0)), key="in_app", on_change=on_retraite_params_change)
     with c_p2:
-        # Scénario A : performance brute moyenne (verrouillée) + inflation moyenne (automatique)
         st.markdown(f"""
         <div style="margin-bottom: 0.8rem;">
             <div style="font-size: 0.9rem; opacity: 0.8; margin-bottom: 0.2rem;">Scénario A (%) 🔒</div>
             <div style="font-size: 1.4rem; font-weight: 600; line-height: 1.2; color: #2ecc71;">
-                {format_smart(moy_brute_hist, '%')} <span style="font-size: 0.65em; opacity: 0.7; font-weight: 400;">(moyenne historique)</span>
+                {format_smart(moy_brute_hist, '%')} <span style="font-size: 0.65em; opacity: 0.7; font-weight: 400;">(moy. historique)</span>
             </div>
             <div style="font-size: 0.8rem; opacity: 0.6; margin-top: 0.2rem;">
-                Inflation moyenne : {format_smart(moy_inflation_hist, '%')} (automatique)
+                Inflation moy. : {format_smart(moy_inflation_hist, '%')} (auto)
             </div>
         </div>
         """, unsafe_allow_html=True)
         rendement_a = moy_brute_hist
-        inflation_a = moy_inflation_hist  # Inflation automatique pour Scénario A
+        inflation_a = moy_inflation_hist
         
-        # Scénario B : fixe modifiable
         rendement_b = st.number_input("Scénario B (%) ✍️", min_value=0.00, value=8.00, step=0.01)
     with c_p3:
         inflation_estimee = st.number_input("Inflation Scénario B (%) ✍️", min_value=0.00, value=2.00, step=0.01)
         taxe_plus_value = st.number_input("Flat Tax (%) ✍️", min_value=0.00, max_value=60.00, step=0.10, value=float(st.session_state.config.get("retraite_taxe", float(st.session_state.config.get("tax_pfu", 30.0)))), key="in_tax", on_change=on_retraite_params_change)
     st.divider()
 
-    # Scénario A : utilise l'inflation moyenne historique
     cap_v_a = cap_v_b = capital_initial; gains_a = gains_b = 0.0; app_a = app_b = apport_mensuel
-    inf_rate_a = inflation_a / 100.0  # Inflation automatique
-    inf_rate_b = inflation_estimee / 100.0  # Inflation manuelle
+    inf_rate_a = inflation_a / 100.0
+    inf_rate_b = inflation_estimee / 100.0
     r_a = rendement_a / 100.0
     r_b = rendement_b / 100.0
     r_a_m = (1 + r_a)**(1/12) - 1
@@ -1052,7 +1048,7 @@ elif page_choisie == "🌴 Retraite":
     total_a = cap_v_a + gains_a; ratio_gains_a = gains_a / total_a if total_a > 0 else 0.0
     rente_br_a = (cap_a_nom / ((1 + inf_rate_a)**(annee_retraite - annee_en_cours))) * tx_r_a / 12
     with colA:
-        st.markdown(f"### Scénario A (Moyenne historique : {format_smart(rendement_a, '%')} / an)")
+        st.markdown(f"### Scénario A ({format_smart(rendement_a, '%')} / an)")
         afficher_montant_double("💰 Valeur Brute", cap_a_nom)
         afficher_montant_double("🛒 Valeur Nette", cap_a_nom / ((1 + inf_rate_a)**(annee_retraite - annee_en_cours)))
         st.write(""); afficher_montant_double("Rente Mensuelle Nette", rente_br_a, couleur_valeur="#2ecc71")
@@ -1061,7 +1057,7 @@ elif page_choisie == "🌴 Retraite":
     total_b = cap_v_b + gains_b; ratio_gains_b = gains_b / total_b if total_b > 0 else 0.0
     rente_br_b = (cap_b_nom / ((1 + inf_rate_b)**(annee_retraite - annee_en_cours))) * tx_r_b / 12
     with colB:
-        st.markdown(f"### Scénario B (Fixe : {format_smart(rendement_b, '%')} / an)")
+        st.markdown(f"### Scénario B ({format_smart(rendement_b, '%')} / an)")
         afficher_montant_double("💰 Valeur Brute", cap_b_nom)
         afficher_montant_double("🛒 Valeur Nette", cap_b_nom / ((1 + inf_rate_b)**(annee_retraite - annee_en_cours)))
         st.write(""); afficher_montant_double("Rente Mensuelle Nette", rente_br_b, couleur_valeur="#3498db")
