@@ -4,13 +4,6 @@ import yfinance as yf
 import urllib.request
 import json
 import time
-from functools import lru_cache
-
-# Cache LRU pour les taux de change (évite les appels répétés pour la même devise+date)
-@lru_cache(maxsize=512)
-def _cached_fx(devise, date_str):
-    """Cache interne pour les taux de change historiques."""
-    return None  # Sera rempli par les fonctions ci-dessous
 
 def fetch_with_retry(func, max_attempts=3, delay=1):
     """Bouclier anti-crash : Réessaie automatiquement si API bloquée."""
@@ -22,7 +15,6 @@ def fetch_with_retry(func, max_attempts=3, delay=1):
         except Exception as e:
             if attempt == max_attempts - 1:
                 return None
-            # Backoff exponentiel
             time.sleep(delay * (2 ** attempt))
     return None
 
@@ -92,87 +84,6 @@ def recuperer_inflation_france():
     return fetch_with_retry(_fetch)
 
 
-@st.cache_data(ttl=3600)
-def _get_historical_rate(devise, date_val, against="EUR"):
-    """Fonction interne pour récupérer un taux de change historique."""
-    d_clean = str(devise).upper().strip()
-    
-    # Si c'est la devise de référence, taux = 1.0
-    if d_clean == against or d_clean == "":
-        return 1.0
-    
-    ticker = f"{d_clean}{against}=X"
-    
-    def _fetch():
-        d = pd.to_datetime(date_val, dayfirst=True, errors='coerce')
-        if pd.isna(d):
-            raise ValueError("Date Invalide")
-        
-        # Pour les dates récentes, prendre le dernier cours
-        if d >= pd.Timestamp.now() - pd.Timedelta(days=1):
-            h = yf.Ticker(ticker).history(period="1d")
-            if not h.empty:
-                return float(h['Close'].iloc[-1])
-        else:
-            # Pour les dates passées, prendre une fenêtre de 5 jours
-            start = (d - pd.Timedelta(days=5)).strftime('%Y-%m-%d')
-            end = (d + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
-            h = yf.Ticker(ticker).history(start=start, end=end)
-            if not h.empty:
-                return float(h['Close'].iloc[-1])
-        
-        raise Exception("Données introuvables")
-    
-    return fetch_with_retry(_fetch)
-
-
-def get_historical_fx(devise, date_val, strict=False):
-    """
-    Récupère le taux de change devise → EUR.
-    Optimisé avec cache à deux niveaux.
-    """
-    # Cache local LRU (niveau 1)
-    cache_key = f"{devise}_{date_val}_EUR"
-    cached = _cached_fx(cache_key)
-    if cached is not None:
-        return cached
-    
-    # Cache Streamlit (niveau 2)
-    result = _get_historical_rate(devise, date_val, against="EUR")
-    
-    if result is not None:
-        # Stocker dans le cache LRU
-        _cached_fx(cache_key)  # On ne peut pas modifier le cache directement,
-        # mais l'appel ci-dessus enregistre la clé.
-        # Solution alternative : utiliser un dictionnaire global
-        return result
-    
-    if strict:
-        raise ValueError(f"⚠️ Échec réseau pour le taux {devise}/EUR.")
-    return 1.0
-
-
-def get_historical_usd_rate(devise, date_val, strict=False):
-    """
-    Récupère le taux de change devise → USD.
-    Optimisé avec cache à deux niveaux.
-    """
-    cache_key = f"{devise}_{date_val}_USD"
-    cached = _cached_fx(cache_key)
-    if cached is not None:
-        return cached
-    
-    result = _get_historical_rate(devise, date_val, against="USD")
-    
-    if result is not None:
-        return result
-    
-    if strict:
-        raise ValueError(f"⚠️ Échec réseau pour le taux {devise}/USD.")
-    return 1.0
-
-
-# --- OPTIMISATION : Bulk download pour les cryptos ---
 @st.cache_data(ttl=300)
 def get_bulk_crypto_prices(tickers_list, start_date, end_date):
     """
@@ -196,8 +107,13 @@ def get_bulk_crypto_prices(tickers_list, start_date, end_date):
         result = {}
         for ticker in tickers_list:
             yf_t = f"{ticker}-USD" if not ticker.endswith("-USD") else ticker
-            if yf_t in data.columns:
+            if isinstance(data, pd.DataFrame) and yf_t in data.columns:
                 series = data[yf_t].dropna()
+                if not series.empty:
+                    result[ticker] = series
+            elif isinstance(data, pd.Series) and len(tickers_list) == 1:
+                # Cas d'une seule crypto
+                series = data.dropna()
                 if not series.empty:
                     result[ticker] = series
         
