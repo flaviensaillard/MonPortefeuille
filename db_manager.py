@@ -4,7 +4,6 @@ import numpy as np
 import re
 import time
 from supabase import create_client, Client
-from functools import lru_cache
 
 @st.cache_resource
 def get_supabase_client() -> Client:
@@ -25,9 +24,8 @@ def _execute_with_retry(operation, max_retries=3, operation_name="Supabase"):
         except Exception as e:
             last_error = e
             if attempt < max_retries - 1:
-                wait_time = 2 ** attempt  # Backoff exponentiel : 1s, 2s, 4s
+                wait_time = 2 ** attempt
                 time.sleep(wait_time)
-                # Réinitialiser le client si erreur de connexion
                 if "connection" in str(e).lower() or "timeout" in str(e).lower():
                     get_supabase_client.clear()
     
@@ -60,51 +58,38 @@ def save_sheet(table_name, df):
     try:
         df_clean = df.copy().replace([np.inf, -np.inf], np.nan).fillna(0.0)
         
-        # Protection anti-zéros pour les prix
         if table_name == "Donnees" and "Court" in df_clean.columns:
-            # Garder seulement les lignes avec un prix valide
             df_clean = df_clean[df_clean["Court"].apply(lambda x: "0.00" not in str(x) and "$ 0.00" not in str(x))]
         
         if not df_clean.empty:
-            # 1. Récupérer les IDs existants (une seule requête)
             existing = supabase.table(table_name).select("id").execute()
             existing_ids = [row["id"] for row in (existing.data or [])]
             
             records = df_clean.to_dict('records')
             
-            # 2. Stratégie optimisée selon le nombre de lignes
             if len(records) <= 10:
-                # Pour les petites tables : UPSERT (plus rapide)
                 if existing_ids:
-                    # Mettre à jour les IDs existants
                     for i, record in enumerate(records):
                         if i < len(existing_ids):
                             record["id"] = existing_ids[i]
-                    # Supprimer les IDs en trop
                     for extra_id in existing_ids[len(records):]:
                         supabase.table(table_name).delete().eq("id", extra_id).execute()
                 
-                # Insérer/Mettre à jour toutes les lignes
                 supabase.table(table_name).upsert(records).execute()
             else:
-                # Pour les grandes tables : DELETE + INSERT (plus fiable)
                 if existing_ids:
-                    # Suppression par lots de 100 IDs max
                     for i in range(0, len(existing_ids), 100):
                         batch = existing_ids[i:i+100]
                         supabase.table(table_name).delete().in_("id", batch).execute()
                 
-                # Insertion par lots de 100 lignes
                 for i in range(0, len(records), 100):
                     batch = records[i:i+100]
                     supabase.table(table_name).insert(batch).execute()
         
-        # Invalider le cache
         load_sheet.clear()
         return True
         
     except Exception as e:
-        # Fallback : sauvegarde en session state
         st.session_state[f"backup_{table_name}"] = df.copy()
         st.error(f"⚠️ Erreur de sauvegarde sur {table_name}. Données en mémoire.")
         return False
@@ -133,7 +118,6 @@ def obtenir_derniere_projection_veille():
     try:
         supabase = get_supabase_client()
         
-        # Requête optimisée : seulement les colonnes nécessaires, triée par date
         response = supabase.table("Projections")\
             .select("Date, Total Global, Actifs Stratégiques")\
             .order("id", desc=True)\
@@ -149,7 +133,6 @@ def obtenir_derniere_projection_veille():
     except Exception as e:
         print(f"Erreur J-1: {e}")
     
-    # Fallback sur load_sheet
     try:
         df_proj = load_sheet("Projections", [])
         if df_proj is not None and not df_proj.empty:
@@ -179,8 +162,6 @@ def _safe_float(value, default=0.0):
     except:
         return default
 
-# Version simplifiée de recalculer_toute_la_base_projections (déjà bien optimisée)
-# On garde la version existante qui est déjà bonne
 def recalculer_toute_la_base_projections(df):
     """Version optimisée avec vectorisation numpy."""
     if df is None or df.empty:
@@ -188,17 +169,14 @@ def recalculer_toute_la_base_projections(df):
         
     df = df.copy()
     
-    # Conversion des dates
     df['Date_Propre'] = df['Date'].astype(str).str.slice(0, 10)
     df['Date_DT'] = pd.to_datetime(df['Date_Propre'], dayfirst=True, errors='coerce')
     df = df.dropna(subset=['Date_DT']).sort_values('Date_DT').reset_index(drop=True)
     
-    # Conversion numérique vectorisée
     for col in ['Capital investi', 'Actifs Stratégiques', 'Total Global']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
     
-    # Calculs vectoriels (beaucoup plus rapide que les boucles)
     df['Variation_Capital'] = df['Capital investi'].diff().fillna(0.0)
     df['Evolution actifs $'] = df['Actifs Stratégiques'].diff().fillna(0.0) - df['Variation_Capital']
     
@@ -217,7 +195,6 @@ def recalculer_toute_la_base_projections(df):
                                             ((df['Total Global'] - df['Capital investi']) / df['Capital investi'] * 100),
                                             0.0)
     
-    # Score TWR
     df['Rendement_Multiplicateur'] = 1 + (df['Evolution actifs %'] / 100)
     df['Score TWR %'] = (df['Rendement_Multiplicateur'].cumprod() - 1) * 100
     df['TG_Score TWR %'] = df['Score TWR %']
