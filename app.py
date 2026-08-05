@@ -12,11 +12,11 @@ from functools import lru_cache
 from streamlit_autorefresh import st_autorefresh
 import logging
 
-# --- IMPORTATION DE L'ARCHITECTURE MODULAIRE OPTIMISÉE ---
+# --- IMPORTATION DE L'ARCHITECTURE MODULAIRE ---
 from utils import format_smart, extraire_nombre, nettoyer_dataframe, is_crypto_ticker
 from db_manager import load_sheet, save_sheet, append_to_sheet, obtenir_derniere_projection_veille, recalculer_toute_la_base_projections
-from api_client import recuperer_inflation_france, get_historical_fx, get_historical_usd_rate
-from tax_engine import calcul_frais_km, calcul_impot_ir, get_action_tax_data, get_crypto_tax_data, get_pru_and_qty
+from api_client import recuperer_inflation_france
+from tax_engine import calcul_frais_km, calcul_impot_ir, get_action_tax_data, get_crypto_tax_data, get_pru_and_qty, get_historical_fx, get_historical_usd_rate
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -56,6 +56,107 @@ FISCAL_DB = {
            "decote_lim_cel": 2083.0, "decote_base_cel": 943.0, "decote_lim_mar": 3432.0, "decote_base_mar": 1553.0,
            "tax_pfu": 30.0, "tax_ps": 17.2, "frais_repas": 5.50}
 }
+
+# --- SYSTÈME DE RÉCUPÉRATION AUTOMATIQUE DES BARÈMES FISCAUX ---
+@st.cache_data(ttl=86400 * 15, show_spinner=False)  # Cache 15 jours
+def get_fiscal_bars_for_year_cached(year):
+    """Version cachée (appelée en premier)"""
+    return _fetch_fiscal_bars(year)
+
+def get_fiscal_bars_for_year(year):
+    """
+    Récupère les barèmes fiscaux avec retry à chaque connexion si le cache est expiré.
+    Retourne (barèmes, source, fiabilité)
+    """
+    try:
+        bars = get_fiscal_bars_for_year_cached(year)
+        return bars, bars.get('_source', 'Cache local'), bars.get('_fiabilite', 'Élevée')
+    except:
+        pass
+    
+    bars = _fetch_fiscal_bars(year)
+    return bars, bars.get('_source', 'Estimation'), bars.get('_fiabilite', 'Moyenne')
+
+def _fetch_fiscal_bars(year):
+    """Fetch réel des barèmes (API > FISCAL_DB > Estimation)"""
+    bars = None
+    source = "Inconnue"
+    fiabilite = "Faible"
+    
+    # 1. Tenter l'API gouvernementale
+    try:
+        url = f"https://api.gouv.fr/impots/bareme/{year}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'MonPortefeuille/1.0'})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            bars = {
+                "tax_lim_1": float(data['tranche1_plafond']),
+                "tax_lim_2": float(data['tranche2_plafond']),
+                "tax_lim_3": float(data['tranche3_plafond']),
+                "tax_lim_4": float(data['tranche4_plafond']),
+                "tax_rate_2": float(data['tranche2_taux']) / 100,
+                "tax_rate_3": float(data['tranche3_taux']) / 100,
+                "tax_rate_4": float(data['tranche4_taux']) / 100,
+                "tax_rate_5": float(data['tranche5_taux']) / 100,
+                "tax_pfu": 30.0,
+                "tax_ps": 17.2,
+                "frais_repas": float(data.get('forfait_repas', 5.50))
+            }
+            source = "API gouvernementale"
+            fiabilite = "Officielle"
+    except:
+        pass
+    
+    # 2. Fallback : FISCAL_DB (valeurs codées)
+    if bars is None and year in FISCAL_DB:
+        bars = FISCAL_DB[year].copy()
+        source = "Base de données interne"
+        fiabilite = "Exacte (vérifiée)"
+    
+    # 3. Estimation basée sur l'inflation
+    if bars is None and year > max(FISCAL_DB.keys()):
+        last_year = max(FISCAL_DB.keys())
+        base = FISCAL_DB[last_year].copy()
+        
+        try:
+            inflation_data = recuperer_inflation_france() or {}
+            avg_inflation = sum(inflation_data.values()) / len(inflation_data) if inflation_data else 2.0
+        except:
+            avg_inflation = 2.0
+        
+        inflation_factor = 1 + (avg_inflation / 100)
+        
+        bars = {
+            "tax_lim_1": round(base["tax_lim_1"] * inflation_factor, 0),
+            "tax_lim_2": round(base["tax_lim_2"] * inflation_factor, 0),
+            "tax_lim_3": round(base["tax_lim_3"] * inflation_factor, 0),
+            "tax_lim_4": round(base["tax_lim_4"] * inflation_factor, 0),
+            "tax_rate_2": base["tax_rate_2"],
+            "tax_rate_3": base["tax_rate_3"],
+            "tax_rate_4": base["tax_rate_4"],
+            "tax_rate_5": base["tax_rate_5"],
+            "decote_lim_cel": round(base["decote_lim_cel"] * inflation_factor, 0),
+            "decote_base_cel": round(base["decote_base_cel"] * inflation_factor, 0),
+            "decote_lim_mar": round(base["decote_lim_mar"] * inflation_factor, 0),
+            "decote_base_mar": round(base["decote_base_mar"] * inflation_factor, 0),
+            "tax_pfu": base["tax_pfu"],
+            "tax_ps": base["tax_ps"],
+            "frais_repas": round(base["frais_repas"] * inflation_factor, 2)
+        }
+        source = "Estimation (inflation)"
+        fiabilite = "Approximative"
+    
+    # 4. Fallback ultime
+    if bars is None:
+        bars = FISCAL_DB.get(max(FISCAL_DB.keys()), FISCAL_DB[2025]).copy()
+        source = "Fallback (dernière année connue)"
+        fiabilite = "Dégradée"
+    
+    bars['_source'] = source
+    bars['_fiabilite'] = fiabilite
+    bars['_year'] = year
+    
+    return bars
 
 @st.cache_data(ttl=3600)
 def get_eur_usd_rate():
@@ -411,7 +512,6 @@ initialize_state()
 
 # --- 5. LOGIQUE DES PAGES (UI) ---
 
-# ==================== TABLEAU DE BORD ====================
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
     df_actuel, df_p = st.session_state.donnees, st.session_state.projections
@@ -468,7 +568,6 @@ if page_choisie == "📊 Tableau de bord":
         except:
             pass
 
-    # --- TOTAL GLOBAL ---
     st.subheader("🌍 2. Total Global")
     c_tg, _ = st.columns(2)
     with c_tg:
@@ -519,7 +618,6 @@ if page_choisie == "📊 Tableau de bord":
                 st.plotly_chart(fig_tg, use_container_width=True)
     st.divider()
 
-    # --- ACTIFS STRATÉGIQUES ---
     st.subheader("🎯 3. Actifs Stratégiques")
     c_st, _ = st.columns(2)
     with c_st:
@@ -584,7 +682,6 @@ if page_choisie == "📊 Tableau de bord":
         tx_r = ((1 + 0.08) / (1 + (inf / 100.0))) - 1
         afficher_montant_double("Rente Mensuelle Nette", (val_invest * max(0.0, tx_r)) / 12.0, couleur_valeur="#3498db")
 
-# ==================== LISTE DES ACTIFS ====================
 elif page_choisie == "📋 Liste des actifs":
     st.title("📋 Liste de mes actifs")
     st.write("Modifiez l'allocation cible. **Quantité verrouillée** pour les investissements.")
@@ -632,7 +729,6 @@ elif page_choisie == "📋 Liste des actifs":
     if not new_df[["Ticker", "Type", "Quantité", "Pourcentage (%)", "Devise Cotation"]].equals(st.session_state.donnees[["Ticker", "Type", "Quantité", "Pourcentage (%)", "Devise Cotation"]]):
         st.session_state.donnees = new_df; recalculer_totaux_locaux(); save_sheet("Donnees", st.session_state.donnees); st.rerun()
 
-# ==================== RÉÉQUILIBRAGE ====================
 elif page_choisie == "⚖️ Rééquilibrage":
     st.title("⚖️ Rééquilibrage & Transactions")
     if st.button("🔄 Actualiser les cours", use_container_width=True):
@@ -713,7 +809,6 @@ elif page_choisie == "⚖️ Rééquilibrage":
         def cr(v): return 'color:#2ecc71' if "↗" in str(v) or "ACHETER" in str(v) or "+" in str(v) else ('color:#e74c3c' if "↘" in str(v) or "VENDRE" in str(v) or "-" in str(v) else 'color:#95a5a6')
         st.dataframe(pd.DataFrame(res).style.map(cr, subset=["Var. Jour 🔒", "Action 🔒", "Qté (+/-) 🔒", "Perf. Globale 🔒"]), use_container_width=True, hide_index=True)
 
-# ==================== FONDS ====================
 elif page_choisie == "💰 Fonds":
     st.title("💰 Fonds")
     st.write("Déclarez vos apports de capital.")
@@ -747,7 +842,6 @@ elif page_choisie == "💰 Fonds":
             if c in d_v.columns: d_v[c] = d_v[c].apply(lambda x: format_smart(x, s))
         st.dataframe(d_v.sort_values('DT', ascending=False).drop(columns=['DT']), use_container_width=True, hide_index=True)
 
-# ==================== SUIVI ====================
 elif page_choisie == "🏖️ Suivi":
     st.title("🏖️ Suivi & Évolution")
     if not st.session_state.projections.empty:
@@ -763,7 +857,6 @@ elif page_choisie == "🏖️ Suivi":
             if c in df_v.columns: df_v[c] = df_v[c].apply(lambda x: format_smart(x, "%", force_sign=True))
         st.dataframe(df_v, column_config={c: st.column_config.TextColumn(c + " 🔒") for c in df_v.columns}, use_container_width=True, hide_index=True)
 
-# ==================== PERFORMANCE ====================
 elif page_choisie == "📈 Performance":
     st.title("📈 Performances Annuelles & Inflation")
     df_p = st.session_state.projections
@@ -830,7 +923,6 @@ elif page_choisie == "📈 Performance":
         fig_bar.update_layout(yaxis_title="Rentabilité (%)", xaxis_title="", legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
         st.plotly_chart(fig_bar, use_container_width=True)
 
-# ==================== RETRAITE ====================
 elif page_choisie == "🌴 Retraite":
     st.title("🌴 Simulateur d'Indépendance Financière")
     df_actuel = st.session_state.donnees
@@ -904,7 +996,6 @@ elif page_choisie == "🌴 Retraite":
         fig_ret.update_layout(yaxis_title="Capital Net ($)", xaxis_title="", legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
         st.plotly_chart(fig_ret, use_container_width=True)
 
-# ==================== FISCALITÉ ====================
 elif page_choisie == "🏛️ Fiscalité":
     st.title("🏛️ Simulateur Fiscal")
     
@@ -920,12 +1011,34 @@ elif page_choisie == "🏛️ Fiscalité":
         
         def on_year_change():
             y = st.session_state.annee_fiscale_select
-            db_y = y if y in FISCAL_DB else max(FISCAL_DB.keys())
-            for k, v in FISCAL_DB[db_y].items():
-                st.session_state.config[k] = v
-                st.session_state[f"in_{k}"] = v
+            bars, _, _ = get_fiscal_bars_for_year(y)
+            for k, v in bars.items():
+                if not k.startswith('_'):
+                    st.session_state.config[k] = v
+                    if f"in_{k}" in st.session_state:
+                        st.session_state[f"in_{k}"] = v
         
         annee_fiscale = st.selectbox("📅 Année des revenus :", annees_dispos, index=idx_defaut, key="annee_fiscale_select", on_change=on_year_change)
+        
+        # --- BANNIÈRE D'INFORMATION SUR LA SOURCE DES BARÈMES ---
+        bars, source, fiabilite = get_fiscal_bars_for_year(annee_fiscale)
+        
+        if fiabilite == "Officielle":
+            emoji, color, bg = "🟢", "#155724", "#d4edda"
+        elif fiabilite in ["Exacte (vérifiée)", "Élevée"]:
+            emoji, color, bg = "🟢", "#155724", "#d4edda"
+        elif fiabilite in ["Approximative", "Moyenne"]:
+            emoji, color, bg = "🟡", "#856404", "#fff3cd"
+        else:
+            emoji, color, bg = "🔴", "#721c24", "#f8d7da"
+        
+        st.markdown(f"""
+        <div style="background-color: {bg}; border-radius: 10px; padding: 10px 15px; margin-bottom: 15px; border-left: 5px solid {color};">
+            <strong>{emoji} Source des barèmes {annee_fiscale} :</strong> {source}<br>
+            <small>Fiabilité : {fiabilite} | {'✅ Barèmes officiels' if fiabilite in ['Officielle', 'Exacte (vérifiée)'] else '⚠️ Estimation basée sur l\\'inflation' if fiabilite == 'Approximative' else '❌ Données potentiellement obsolètes'}</small>
+        </div>
+        """, unsafe_allow_html=True)
+        
         st.divider()
 
         df_actions = pd.DataFrame(get_action_tax_data(df_t, annee_fiscale))
@@ -992,7 +1105,6 @@ elif page_choisie == "🏛️ Fiscalité":
 
     st.subheader(f"📝 2. Antisèche du Fisc (Revenus {annee_fiscale})")
 
-    # ✅ CORRECTION : Tous les expanders repliés par défaut
     exp_2042 = st.expander("📁 Formulaire 2042 (Déclaration Principale)", expanded=False)
     with exp_2042:
         st.markdown("### ⚙️ Paramètres Fiscaux & Revenus")
@@ -1042,7 +1154,6 @@ elif page_choisie == "🏛️ Fiscalité":
         
         out_2042_lines = st.container()
 
-    # ✅ CORRECTION : Tous les expanders suivants repliés par défaut
     with st.expander("📁 Formulaire 2047 (Revenus étrangers)", expanded=False):
         st.markdown("### 🔹 Rubrique 2")
         c_rev1, c_rev2 = st.columns(2)
