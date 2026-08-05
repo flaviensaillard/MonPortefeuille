@@ -803,35 +803,44 @@ elif page_choisie == "🌴 Retraite":
     r_a = rendement_a/100.0; r_b = rendement_b/100.0
     r_a_m = (1+r_a)**(1/12)-1; r_b_m = (1+r_b)**(1/12)-1
 
-    # Total des apports passés
+     # Total des apports passés
     total_apports_passes = sum(r["Montant $"] if "ajout" in r["Type"].lower() else -r["Montant $"] for _,r in st.session_state.historique.iterrows())
     
-    # Apports futurs (avec inflation)
-    total_apports_futurs_a = 0; total_apports_futurs_b = 0
-    app_a_temp = apport_mensuel; app_b_temp = apport_mensuel
+    # Apports futurs (identiques pour les deux scénarios)
+    total_apports_futurs = 0
+    app_temp = apport_mensuel
     
     trajectory_data = []
     for y in range(annee_en_cours, annee_retraite):
         mois_dans_annee = 12 if y>annee_en_cours else max(1,13-datetime.datetime.now().month)
-        total_apports_futurs_a += app_a_temp*mois_dans_annee
-        total_apports_futurs_b += app_b_temp*mois_dans_annee
+        
         for _ in range(mois_dans_annee):
-            int_a = (cap_v_a+gains_a)*r_a_m; gains_a += int_a; cap_v_a += app_a
-            int_b = (cap_v_b+gains_b)*r_b_m; gains_b += int_b; cap_v_b += app_b
-        app_a_temp *= (1+inf_rate_a); app_b_temp *= (1+inf_rate_b)
+            # Ajouter l'apport du mois (identique pour A et B)
+            cap_v_a += app_temp
+            cap_v_b += app_temp
+            total_apports_futurs += app_temp
+            
+            # Calculer les intérêts (différents selon le scénario)
+            int_a = cap_v_a * r_a_m
+            int_b = cap_v_b * r_b_m
+            cap_v_a += int_a
+            cap_v_b += int_b
+        
+        # L'apport mensuel augmente avec l'inflation des apports (identique)
+        app_temp *= (1+inf_rate_apports)
+        
         years_diff = y-annee_en_cours+1
-        cap_a_nom = cap_v_a+gains_a; cap_b_nom = cap_v_b+gains_b
         trajectory_data.append({
             "Année":y,
-            "Capital Net (Scénario A)":round(cap_a_nom/((1+inf_rate_a)**years_diff),2),
-            "Capital Net (Scénario B)":round(cap_b_nom/((1+inf_rate_b)**years_diff),2)
+            "Capital Net (Scénario A)":round(cap_v_a/((1+inf_rate_a)**years_diff),2),
+            "Capital Net (Scénario B)":round(cap_v_b/((1+inf_rate_b)**years_diff),2)
         })
-    app_a *= (1+inf_rate_a); app_b *= (1+inf_rate_b)
+    
     years_diff = annee_retraite-annee_en_cours
-    cap_a_nom = cap_v_a+gains_a; cap_b_nom = cap_v_b+gains_b
+    cap_a_nom = cap_v_a
+    cap_b_nom = cap_v_b
 
-    total_apports_a = total_apports_passes+total_apports_futurs_a
-    total_apports_b = total_apports_passes+total_apports_futurs_b
+    total_apports = total_apports_passes+total_apports_futurs  # Identique pour A et B
 
     tx_r_a = max(0.0,((1.08)/(1+inf_rate_a))-1)
     tx_r_b = max(0.0,((1.08)/(1+inf_rate_b))-1)
@@ -839,11 +848,11 @@ elif page_choisie == "🌴 Retraite":
     st.subheader(f"🎯 Capital projeté au 1er Janvier {annee_retraite}"); colA,colB = st.columns(2)
 
     # --- SCÉNARIO A ---
-    total_a = cap_v_a+gains_a
-    plus_value_a = max(0,total_a-total_apports_a)
-    part_plus_value_a = plus_value_a/total_a if total_a>0 else 0
+    total_a = cap_v_a
+    plus_value_a = max(0,total_a-total_apports)
+    part_plus_value_a = (plus_value_a/total_a*100) if total_a>0 else 0
     rente_br_a = (cap_a_nom/((1+inf_rate_a)**years_diff))*tx_r_a/12
-    impot_a = rente_br_a*part_plus_value_a*(taxe_plus_value/100)
+    impot_a = rente_br_a*(part_plus_value_a/100)*(taxe_plus_value/100)
     rente_nette_a = rente_br_a-impot_a
     
     with colA:
@@ -851,20 +860,20 @@ elif page_choisie == "🌴 Retraite":
         afficher_montant_double("💰 Capital Brut Final",cap_a_nom)
         afficher_montant_double("🛒 Capital Net (pouvoir d'achat)",cap_a_nom/((1+inf_rate_a)**years_diff))
         st.write("")
-        afficher_montant_double("📥 Total Apports",total_apports_a,couleur_valeur="#95a5a6")
+        afficher_montant_double("📥 Total Apports",total_apports,couleur_valeur="#95a5a6")
         afficher_montant_double("📈 Plus-Value",plus_value_a,couleur_valeur="#2ecc71")
-        afficher_montant_double("📊 Part Plus-Value",part_plus_value_a*100,couleur_valeur="#95a5a6")
+        st.metric("📊 Part Plus-Value",f"{format_smart(part_plus_value_a,'%')}")
         st.write("")
         afficher_montant_double("💰 Rente Brute Mensuelle",rente_br_a,couleur_valeur="#f39c12")
         afficher_montant_double(f"💸 Impôt ({format_smart(taxe_plus_value,'%')} sur PV)",impot_a,couleur_valeur="#e74c3c",taille="medium")
         afficher_montant_double("🟢 Rente Nette Mensuelle",rente_nette_a,couleur_valeur="#2ecc71")
 
     # --- SCÉNARIO B ---
-    total_b = cap_v_b+gains_b
-    plus_value_b = max(0,total_b-total_apports_b)
-    part_plus_value_b = plus_value_b/total_b if total_b>0 else 0
+    total_b = cap_v_b
+    plus_value_b = max(0,total_b-total_apports)  # Même total_apports que A
+    part_plus_value_b = (plus_value_b/total_b*100) if total_b>0 else 0
     rente_br_b = (cap_b_nom/((1+inf_rate_b)**years_diff))*tx_r_b/12
-    impot_b = rente_br_b*part_plus_value_b*(taxe_plus_value/100)
+    impot_b = rente_br_b*(part_plus_value_b/100)*(taxe_plus_value/100)
     rente_nette_b = rente_br_b-impot_b
     
     with colB:
@@ -872,9 +881,9 @@ elif page_choisie == "🌴 Retraite":
         afficher_montant_double("💰 Capital Brut Final",cap_b_nom)
         afficher_montant_double("🛒 Capital Net (pouvoir d'achat)",cap_b_nom/((1+inf_rate_b)**years_diff))
         st.write("")
-        afficher_montant_double("📥 Total Apports",total_apports_b,couleur_valeur="#95a5a6")
+        afficher_montant_double("📥 Total Apports",total_apports,couleur_valeur="#95a5a6")  # Identique
         afficher_montant_double("📈 Plus-Value",plus_value_b,couleur_valeur="#3498db")
-        afficher_montant_double("📊 Part Plus-Value",part_plus_value_b*100,couleur_valeur="#95a5a6")
+        st.metric("📊 Part Plus-Value",f"{format_smart(part_plus_value_b,'%')}")
         st.write("")
         afficher_montant_double("💰 Rente Brute Mensuelle",rente_br_b,couleur_valeur="#f39c12")
         afficher_montant_double(f"💸 Impôt ({format_smart(taxe_plus_value,'%')} sur PV)",impot_b,couleur_valeur="#e74c3c",taille="medium")
