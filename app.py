@@ -1025,17 +1025,21 @@ elif page_choisie == "🏛️ Fiscalité":
         
         if fiabilite == "Officielle":
             emoji, color, bg = "🟢", "#155724", "#d4edda"
+            message = "✅ Barèmes officiels"
         elif fiabilite in ["Exacte (vérifiée)", "Élevée"]:
             emoji, color, bg = "🟢", "#155724", "#d4edda"
+            message = "✅ Barèmes officiels"
         elif fiabilite in ["Approximative", "Moyenne"]:
             emoji, color, bg = "🟡", "#856404", "#fff3cd"
+            message = "⚠️ Estimation basée sur l'inflation"
         else:
             emoji, color, bg = "🔴", "#721c24", "#f8d7da"
+            message = "❌ Données potentiellement obsolètes"
         
         st.markdown(f"""
         <div style="background-color: {bg}; border-radius: 10px; padding: 10px 15px; margin-bottom: 15px; border-left: 5px solid {color};">
             <strong>{emoji} Source des barèmes {annee_fiscale} :</strong> {source}<br>
-            <small>Fiabilité : {fiabilite} | {'✅ Barèmes officiels' if fiabilite in ['Officielle', 'Exacte (vérifiée)'] else '⚠️ Estimation basée sur l\\'inflation' if fiabilite == 'Approximative' else '❌ Données potentiellement obsolètes'}</small>
+            <small>Fiabilité : {fiabilite} | {message}</small>
         </div>
         """, unsafe_allow_html=True)
         
