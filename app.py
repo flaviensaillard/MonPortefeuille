@@ -8,13 +8,20 @@ import time
 import plotly.express as px
 import urllib.request
 import json
+from decimal import Decimal, ROUND_HALF_UP
+from functools import lru_cache
 from streamlit_autorefresh import st_autorefresh
+import logging
 
 # --- IMPORTATION DE L'ARCHITECTURE MODULAIRE ---
 from utils import format_smart, extraire_nombre, nettoyer_dataframe, is_crypto_ticker
 from db_manager import load_sheet, save_sheet, append_to_sheet, obtenir_derniere_projection_veille, recalculer_toute_la_base_projections
 from api_client import recuperer_inflation_france, get_historical_fx, get_historical_usd_rate
 from tax_engine import calcul_frais_km, calcul_impot_ir, get_action_tax_data, get_crypto_tax_data, get_pru_and_qty
+
+# Configuration du logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # --- 1. CONFIGURATION ET CONSTANTES ---
 st.set_page_config(page_title="Mon Portefeuille", layout="wide")
@@ -36,13 +43,19 @@ FISCAL_DB = {
     2025: {"tax_lim_1": 11750.0, "tax_lim_2": 29957.0, "tax_lim_3": 85664.0, "tax_lim_4": 184261.0, "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45, "decote_lim_cel": 2083.0, "decote_base_cel": 943.0, "decote_lim_mar": 3432.0, "decote_base_mar": 1553.0, "tax_pfu": 30.0, "tax_ps": 17.2, "frais_repas": 5.50}
 }
 
-# Cache pour le taux EUR/USD
 @st.cache_data(ttl=3600)
 def get_eur_usd_rate():
-    try:
-        return float(yf.Ticker("EURUSD=X").history(period="1d")['Close'].iloc[-1])
-    except:
-        return 1.05
+    for attempt in range(3):
+        try:
+            rate = float(yf.Ticker("EURUSD=X").history(period="1d")['Close'].iloc[-1])
+            if rate > 0:
+                return rate
+        except Exception as e:
+            logger.warning(f"Tentative {attempt + 1} échouée pour EUR/USD: {e}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    logger.error("Impossible de récupérer le taux EUR/USD après 3 tentatives")
+    return 1.05
 
 TAUX_EUR_USD = get_eur_usd_rate()
 
@@ -61,71 +74,111 @@ def check_password():
 
 if not check_password(): st.stop()
 
-# --- 3. FONCTIONS CONTROLEUR (optimisées, sans colonnes numériques persistantes) ---
+# --- 3. FONCTIONS UTILITAIRES ---
+@lru_cache(maxsize=256)
+def extraire_nombre_cached(value_str):
+    return extraire_nombre(value_str)
+
+def safe_save_sheet(table_name, df, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            save_sheet(table_name, df)
+            logger.info(f"Sauvegarde réussie pour {table_name}")
+            return True
+        except Exception as e:
+            logger.warning(f"Tentative {attempt + 1} échouée pour {table_name}: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+            else:
+                logger.error(f"Échec de sauvegarde pour {table_name} après {max_retries} tentatives")
+                st.session_state[f"backup_{table_name}"] = df.copy()
+                st.error(f"⚠️ Impossible de sauvegarder {table_name}. Données conservées en mémoire.")
+                return False
+    return False
+
+# --- 4. FONCTIONS CONTROLEUR ---
 def afficher_montant_double(label, montant_usd, delta_str="", couleur_valeur=None, taille="large"):
-    montant_eur = montant_usd / TAUX_EUR_USD
-    s_usd, s_eur = format_smart(montant_usd), format_smart(montant_eur)
-    delta_html = f"<div style='font-size: 0.9rem; font-weight: 600; color: {'#2ecc71' if '+' in delta_str else ('#e74c3c' if '-' in delta_str else 'inherit')}; padding-top: 0.2rem;'>{delta_str}</div>" if delta_str else ""
-    t_val, t_lbl = ("1.8rem", "0.9rem") if taille == "large" else ("1.4rem", "0.85rem") if taille == "medium" else ("1.2rem", "0.85rem")
-    c_val = f"color: {couleur_valeur};" if couleur_valeur else ""
-    st.markdown(f"""<div style="margin-bottom: 0.8rem;"><div style="font-size: {t_lbl}; opacity: 0.8; margin-bottom: 0.2rem;">{label}</div><div style="font-size: {t_val}; font-weight: 600; line-height: 1.2; {c_val}">{s_usd} $ <span style="font-size: 0.65em; opacity: 0.7; font-weight: 400;">/ {s_eur} €</span></div>{delta_html}</div>""", unsafe_allow_html=True)
+    try:
+        montant_eur = montant_usd / TAUX_EUR_USD
+        s_usd, s_eur = format_smart(montant_usd), format_smart(montant_eur)
+        delta_html = f"<div style='font-size: 0.9rem; font-weight: 600; color: {'#2ecc71' if '+' in delta_str else ('#e74c3c' if '-' in delta_str else 'inherit')}; padding-top: 0.2rem;'>{delta_str}</div>" if delta_str else ""
+        t_val, t_lbl = ("1.8rem", "0.9rem") if taille == "large" else ("1.4rem", "0.85rem") if taille == "medium" else ("1.2rem", "0.85rem")
+        c_val = f"color: {couleur_valeur};" if couleur_valeur else ""
+        st.markdown(f"""<div style="margin-bottom: 0.8rem;"><div style="font-size: {t_lbl}; opacity: 0.8; margin-bottom: 0.2rem;">{label}</div><div style="font-size: {t_val}; font-weight: 600; line-height: 1.2; {c_val}">{s_usd} $ <span style="font-size: 0.65em; opacity: 0.7; font-weight: 400;">/ {s_eur} €</span></div>{delta_html}</div>""", unsafe_allow_html=True)
+    except Exception as e:
+        logger.error(f"Erreur dans afficher_montant_double: {e}")
 
 def recalculer_totaux_locaux():
-    """Recalcule Court et Valeur totale formatés, sans ajouter de colonnes numériques persistantes."""
-    if "donnees" in st.session_state:
+    if "donnees" not in st.session_state:
+        return
+    try:
         df = st.session_state.donnees.copy()
         court_num = df.apply(
-            lambda row: 1.0 if str(row.get("Ticker")).upper() == "USD" else extraire_nombre(row.get("Court")),
+            lambda row: 1.0 if str(row.get("Ticker")).upper() == "USD" else extraire_nombre_cached(str(row.get("Court", "0"))),
             axis=1
         )
-        qte_num = df["Quantité"].apply(extraire_nombre)
+        qte_num = df["Quantité"].apply(lambda x: extraire_nombre_cached(str(x)))
         df["Court"] = court_num.apply(lambda x: format_smart(x, "$", is_price=True))
         df["Valeur totale"] = (court_num * qte_num).apply(lambda x: format_smart(x, "$"))
         st.session_state.donnees = df
+    except Exception as e:
+        logger.error(f"Erreur dans recalculer_totaux_locaux: {e}")
 
 def parse_variation_pct(var_str):
-    match = re.search(r'(\d+\.?\d*)', var_str)
+    if not var_str or var_str == "N/A":
+        return 0.0
+    match = re.search(r'(\d+\.?\d*)', str(var_str))
     if match:
         val = float(match.group(1))
-        if '↘' in var_str or var_str.strip().startswith('-'):
+        if '↘' in str(var_str) or str(var_str).strip().startswith('-'):
             return -val
         return val
     return 0.0
 
 def calculer_metriques_jour(df_actuel, variations):
-    if df_actuel.empty: return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
-    df = df_actuel.copy()
-    df["Quantité Num"] = df["Quantité"].apply(extraire_nombre)
-    df["Court Num"] = df.apply(lambda row: 1.0 if str(row["Ticker"]).upper() == "USD" else extraire_nombre(row["Court"]), axis=1)
-    df["Valeur totale Num"] = df["Court Num"] * df["Quantité Num"]
-    df["Pourcentage Num"] = df["Pourcentage (%)"].apply(extraire_nombre)
-    
-    df["Var_Pct"] = df["Ticker"].apply(lambda t: parse_variation_pct(variations.get(str(t).upper(), "0")))
-    df["Val_Veille"] = df["Valeur totale Num"] / (1 + df["Var_Pct"] / 100)
-    df["Val_Veille"] = df["Val_Veille"].fillna(df["Valeur totale Num"])
+    if df_actuel.empty:
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    try:
+        df = df_actuel.copy()
+        df["Quantité Num"] = df["Quantité"].apply(lambda x: extraire_nombre_cached(str(x)))
+        df["Court Num"] = df.apply(lambda row: 1.0 if str(row["Ticker"]).upper() == "USD" else extraire_nombre_cached(str(row["Court"])), axis=1)
+        df["Valeur totale Num"] = df["Court Num"] * df["Quantité Num"]
+        df["Pourcentage Num"] = df["Pourcentage (%)"].apply(lambda x: extraire_nombre_cached(str(x)))
+        
+        df["Var_Pct"] = df["Ticker"].apply(lambda t: parse_variation_pct(variations.get(str(t).upper(), "0")))
+        df["Val_Veille"] = df["Valeur totale Num"] / (1 + df["Var_Pct"] / 100)
+        df["Val_Veille"] = df["Val_Veille"].fillna(df["Valeur totale Num"])
 
-    val_total = df["Valeur totale Num"].sum()
-    val_invest = df.loc[df["Pourcentage Num"] > 0, "Valeur totale Num"].sum()
-    somme_p = df["Pourcentage Num"].sum()
-    
-    v_jour_tg_usd = (df["Valeur totale Num"] - df["Val_Veille"]).sum()
-    val_tot_veille = df["Val_Veille"].sum()
-    pct_jour_tg = (v_jour_tg_usd / val_tot_veille * 100) if val_tot_veille > 0 else 0.0
-    
-    df_strat = df[df["Pourcentage Num"] > 0]
-    v_jour_strat_usd = (df_strat["Valeur totale Num"] - df_strat["Val_Veille"]).sum()
-    val_inv_veille = df_strat["Val_Veille"].sum()
-    pct_jour_strat = (v_jour_strat_usd / val_inv_veille * 100) if val_inv_veille > 0 else 0.0
-    
-    return val_invest, val_total, somme_p, v_jour_tg_usd, pct_jour_tg, v_jour_strat_usd, pct_jour_strat
+        val_total = df["Valeur totale Num"].sum()
+        val_invest = df.loc[df["Pourcentage Num"] > 0, "Valeur totale Num"].sum()
+        somme_p = df["Pourcentage Num"].sum()
+        
+        v_jour_tg_usd = (df["Valeur totale Num"] - df["Val_Veille"]).sum()
+        val_tot_veille = df["Val_Veille"].sum()
+        pct_jour_tg = (v_jour_tg_usd / val_tot_veille * 100) if val_tot_veille > 0 else 0.0
+        
+        df_strat = df[df["Pourcentage Num"] > 0]
+        v_jour_strat_usd = (df_strat["Valeur totale Num"] - df_strat["Val_Veille"]).sum()
+        val_inv_veille = df_strat["Val_Veille"].sum()
+        pct_jour_strat = (v_jour_strat_usd / val_inv_veille * 100) if val_inv_veille > 0 else 0.0
+        
+        return val_invest, val_total, somme_p, v_jour_tg_usd, pct_jour_tg, v_jour_strat_usd, pct_jour_strat
+    except Exception as e:
+        logger.error(f"Erreur dans calculer_metriques_jour: {e}")
+        return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
 @st.cache_data(ttl=600)
 def fetch_yahoo_data(tickers_tuple):
-    try:
-        data = yf.download(list(tickers_tuple), period="2d", progress=False)['Close']
-        return data
-    except Exception:
-        return None
+    for attempt in range(2):
+        try:
+            data = yf.download(list(tickers_tuple), period="2d", progress=False)['Close']
+            if data is not None:
+                return data
+        except Exception as e:
+            logger.warning(f"Tentative {attempt + 1} Yahoo échouée: {e}")
+            if attempt < 1:
+                time.sleep(3)
+    return None
 
 def actualiser_cours_internet(silencieux=False):
     if "donnees" not in st.session_state: return
@@ -220,89 +273,116 @@ def actualiser_cours_internet(silencieux=False):
     if changement:
         st.session_state.donnees = df_tmp
         recalculer_totaux_locaux()
-        save_sheet("Donnees", st.session_state.donnees)
+        safe_save_sheet("Donnees", st.session_state.donnees)
 
-# --- 4. INITIALISATION AU DEMARRAGE ---
+# --- 5. INITIALISATION AU DEMARRAGE ---
 def initialize_state():
     if "variations" not in st.session_state: st.session_state.variations = {}
     
     if "config" not in st.session_state:
-        df_c = load_sheet("Config", ["Clé", "Valeur"])
-        def parse_config_val(k, v):
-            k_str, v_str = str(k).strip(), str(v).strip()
-            if k_str in ["f_statut", "urssaf_bareme", "f_pays_etr"]: return v_str
-            if k_str in ["f_u1", "f_u2"]: return v_str.lower() in ['true', '1', '1.0', 'oui', 'yes']
-            return extraire_nombre(v)
-        st.session_state.config = {str(r["Clé"]).strip(): parse_config_val(r["Clé"], r["Valeur"]) for _, r in df_c.iterrows() if pd.notna(r["Clé"])}
+        try:
+            df_c = load_sheet("Config", ["Clé", "Valeur"])
+            def parse_config_val(k, v):
+                k_str, v_str = str(k).strip(), str(v).strip()
+                if k_str in ["f_statut", "urssaf_bareme", "f_pays_etr"]: return v_str
+                if k_str in ["f_u1", "f_u2"]: return v_str.lower() in ['true', '1', '1.0', 'oui', 'yes']
+                return extraire_nombre(v)
+            st.session_state.config = {str(r["Clé"]).strip(): parse_config_val(r["Clé"], r["Valeur"]) for _, r in df_c.iterrows() if pd.notna(r["Clé"])}
 
-        d_conf = {
-            "retraite_apport_mensuel": 250.0, "retraite_taxe": 30.0, "f_statut": "Marié(e) / Pacsé(e)", 
-            "f_enf": 0.0, "f_s1": 30000.0, "f_s2": 0.0, "f_u1": False, "f_k1": 0.0, "f_cv1": 5.0, 
-            "f_r1": 0.0, "f_u2": False, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0, "f_int_net": 0.0, "f_pays_etr": "Lituanie",
-            "tax_lim_1": FISCAL_DB[2025]["tax_lim_1"], "tax_lim_2": FISCAL_DB[2025]["tax_lim_2"], "tax_lim_3": FISCAL_DB[2025]["tax_lim_3"], "tax_lim_4": FISCAL_DB[2025]["tax_lim_4"],
-            "tax_rate_2": FISCAL_DB[2025]["tax_rate_2"], "tax_rate_3": FISCAL_DB[2025]["tax_rate_3"], "tax_rate_4": FISCAL_DB[2025]["tax_rate_4"], "tax_rate_5": FISCAL_DB[2025]["tax_rate_5"],
-            "decote_lim_cel": FISCAL_DB[2025]["decote_lim_cel"], "decote_base_cel": FISCAL_DB[2025]["decote_base_cel"], "decote_lim_mar": FISCAL_DB[2025]["decote_lim_mar"], "decote_base_mar": FISCAL_DB[2025]["decote_base_mar"],
-            "tax_pfu": FISCAL_DB[2025]["tax_pfu"], "tax_ps": FISCAL_DB[2025]["tax_ps"], "frais_repas": FISCAL_DB[2025]["frais_repas"],
-            "urssaf_bareme": '{"3":[0.529, 0.316, 1065, 0.370], "4":[0.606, 0.340, 1330, 0.407], "5":[0.636, 0.357, 1395, 0.427], "6":[0.665, 0.374, 1457, 0.447], "7":[0.697, 0.394, 1515, 0.470]}'
-        }
-        for k, v in d_conf.items():
-            if k not in st.session_state.config: st.session_state.config[k] = v
+            d_conf = {
+                "retraite_apport_mensuel": 250.0, "retraite_taxe": 30.0, "f_statut": "Marié(e) / Pacsé(e)", 
+                "f_enf": 0.0, "f_s1": 30000.0, "f_s2": 0.0, "f_u1": False, "f_k1": 0.0, "f_cv1": 5.0, 
+                "f_r1": 0.0, "f_u2": False, "f_k2": 0.0, "f_cv2": 5.0, "f_r2": 0.0, "f_int_net": 0.0, "f_pays_etr": "Lituanie",
+                "tax_lim_1": FISCAL_DB[2025]["tax_lim_1"], "tax_lim_2": FISCAL_DB[2025]["tax_lim_2"], "tax_lim_3": FISCAL_DB[2025]["tax_lim_3"], "tax_lim_4": FISCAL_DB[2025]["tax_lim_4"],
+                "tax_rate_2": FISCAL_DB[2025]["tax_rate_2"], "tax_rate_3": FISCAL_DB[2025]["tax_rate_3"], "tax_rate_4": FISCAL_DB[2025]["tax_rate_4"], "tax_rate_5": FISCAL_DB[2025]["tax_rate_5"],
+                "decote_lim_cel": FISCAL_DB[2025]["decote_lim_cel"], "decote_base_cel": FISCAL_DB[2025]["decote_base_cel"], "decote_lim_mar": FISCAL_DB[2025]["decote_lim_mar"], "decote_base_mar": FISCAL_DB[2025]["decote_base_mar"],
+                "tax_pfu": FISCAL_DB[2025]["tax_pfu"], "tax_ps": FISCAL_DB[2025]["tax_ps"], "frais_repas": FISCAL_DB[2025]["frais_repas"],
+                "urssaf_bareme": '{"3":[0.529, 0.316, 1065, 0.370], "4":[0.606, 0.340, 1330, 0.407], "5":[0.636, 0.357, 1395, 0.427], "6":[0.665, 0.374, 1457, 0.447], "7":[0.697, 0.394, 1515, 0.470]}'
+            }
+            for k, v in d_conf.items():
+                if k not in st.session_state.config: st.session_state.config[k] = v
+        except Exception as e:
+            logger.error(f"Erreur chargement config: {e}")
 
     if "donnees" not in st.session_state:
-        st.session_state.donnees = nettoyer_dataframe(load_sheet("Donnees", ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)", "Devise Cotation"]))
-        recalculer_totaux_locaux()
+        try:
+            st.session_state.donnees = nettoyer_dataframe(load_sheet("Donnees", ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)", "Devise Cotation"]))
+            recalculer_totaux_locaux()
+        except Exception as e:
+            logger.error(f"Erreur chargement donnees: {e}")
     else:
-        recalculer_totaux_locaux()  # S'assure que les colonnes formatées sont à jour
+        recalculer_totaux_locaux()
 
     if "historique" not in st.session_state:
-        df_h = load_sheet("Historique", ["Date", "Type", "Montant $", "Montant €", "Montant Or"])
-        for c in ["Montant $", "Montant €", "Montant Or"]:
-            if c in df_h.columns: df_h[c] = df_h[c].apply(extraire_nombre)
-        st.session_state.historique = df_h
+        try:
+            df_h = load_sheet("Historique", ["Date", "Type", "Montant $", "Montant €", "Montant Or"])
+            for c in ["Montant $", "Montant €", "Montant Or"]:
+                if c in df_h.columns: df_h[c] = df_h[c].apply(extraire_nombre)
+            st.session_state.historique = df_h
+        except Exception as e:
+            logger.error(f"Erreur chargement historique: {e}")
 
     if "projections" not in st.session_state:
-        st.session_state.projections = recalculer_toute_la_base_projections(load_sheet("Projections", []))
+        try:
+            st.session_state.projections = recalculer_toute_la_base_projections(load_sheet("Projections", []))
+        except Exception as e:
+            logger.error(f"Erreur chargement projections: {e}")
     elif "TG_Evolution cumulée $" not in st.session_state.projections.columns:
-        st.session_state.projections = recalculer_toute_la_base_projections(st.session_state.projections)
+        try:
+            st.session_state.projections = recalculer_toute_la_base_projections(st.session_state.projections)
+        except Exception as e:
+            logger.error(f"Erreur recalcul projections: {e}")
 
     if "inflation" not in st.session_state:
-        df_i = load_sheet("Inflation", ["Année", "Inflation (%)"])
-        if not df_i.empty and 'Année' in df_i.columns: 
-            df_i['Année'] = pd.to_numeric(df_i['Année'], errors='coerce').fillna(0).astype(int)
-            df_i['Inflation (%)'] = pd.to_numeric(df_i['Inflation (%)'], errors='coerce').fillna(0.0)
-            df_i.drop_duplicates(subset=['Année'], keep='last', inplace=True)
-        st.session_state.inflation = df_i
+        try:
+            df_i = load_sheet("Inflation", ["Année", "Inflation (%)"])
+            if not df_i.empty and 'Année' in df_i.columns: 
+                df_i['Année'] = pd.to_numeric(df_i['Année'], errors='coerce').fillna(0).astype(int)
+                df_i['Inflation (%)'] = pd.to_numeric(df_i['Inflation (%)'], errors='coerce').fillna(0.0)
+                df_i.drop_duplicates(subset=['Année'], keep='last', inplace=True)
+            st.session_state.inflation = df_i
+        except Exception as e:
+            logger.error(f"Erreur chargement inflation: {e}")
 
     if "inflation_check_done" not in st.session_state:
         st.session_state.inflation_check_done = True
-        d_inf = recuperer_inflation_france() or {}
-        if not st.session_state.projections.empty:
-            df_p_tmp = st.session_state.projections.copy(); df_p_tmp['Date_DT'] = pd.to_datetime(df_p_tmp['Date'], dayfirst=True, errors='coerce')
-            ans = df_p_tmp.dropna(subset=['Date_DT'])['Date_DT'].dt.year.unique()
-            n_inf, chg = [], False
-            current_inf_dict = {int(r['Année']): r['Inflation (%)'] for _, r in st.session_state.inflation.iterrows()} if not st.session_state.inflation.empty else {}
-            for a in ans:
-                v_api = d_inf.get(a, 0.0); v_sheet = current_inf_dict.get(a, 0.0)
-                if v_api == 0.0 and v_sheet != 0.0: v_final = v_sheet
-                elif v_api != 0.0 and v_api != v_sheet: v_final = v_api; chg = True
-                else: v_final = v_sheet
-                n_inf.append({'Année': a, 'Inflation (%)': v_final})
-            if chg: st.session_state.inflation = pd.DataFrame(n_inf); save_sheet("Inflation", st.session_state.inflation)
+        try:
+            d_inf = recuperer_inflation_france() or {}
+            if not st.session_state.projections.empty:
+                df_p_tmp = st.session_state.projections.copy(); df_p_tmp['Date_DT'] = pd.to_datetime(df_p_tmp['Date'], dayfirst=True, errors='coerce')
+                ans = df_p_tmp.dropna(subset=['Date_DT'])['Date_DT'].dt.year.unique()
+                n_inf, chg = [], False
+                current_inf_dict = {int(r['Année']): r['Inflation (%)'] for _, r in st.session_state.inflation.iterrows()} if not st.session_state.inflation.empty else {}
+                for a in ans:
+                    v_api = d_inf.get(a, 0.0); v_sheet = current_inf_dict.get(a, 0.0)
+                    if v_api == 0.0 and v_sheet != 0.0: v_final = v_sheet
+                    elif v_api != 0.0 and v_api != v_sheet: v_final = v_api; chg = True
+                    else: v_final = v_sheet
+                    n_inf.append({'Année': a, 'Inflation (%)': v_final})
+                if chg: st.session_state.inflation = pd.DataFrame(n_inf); safe_save_sheet("Inflation", st.session_state.inflation)
+        except Exception as e:
+            logger.error(f"Erreur vérification inflation: {e}")
 
     if "transactions" not in st.session_state:
-        df_t = load_sheet("Transaction", ["Ticker", "Type", "Date", "Quantité", "Cours", "Frais", "Montant Net", "Devise", "PRU (Devise)", "Taux change (EUR)"])
-        for c in ["Quantité", "Cours", "Frais", "Montant Net", "PRU (Devise)", "Taux change (EUR)"]:
-            if c in df_t.columns: df_t[c] = df_t[c].apply(extraire_nombre)
-        st.session_state.transactions = df_t
+        try:
+            df_t = load_sheet("Transaction", ["Ticker", "Type", "Date", "Quantité", "Cours", "Frais", "Montant Net", "Devise", "PRU (Devise)", "Taux change (EUR)"])
+            for c in ["Quantité", "Cours", "Frais", "Montant Net", "PRU (Devise)", "Taux change (EUR)"]:
+                if c in df_t.columns: df_t[c] = df_t[c].apply(extraire_nombre)
+            st.session_state.transactions = df_t
+        except Exception as e:
+            logger.error(f"Erreur chargement transactions: {e}")
 
     if "dernier_refresh_cours" not in st.session_state: st.session_state.dernier_refresh_cours = 0
     if time.time() - st.session_state.dernier_refresh_cours >= 900:
-        actualiser_cours_internet(silencieux=(st.session_state.dernier_refresh_cours == 0))
-        st.session_state.dernier_refresh_cours = time.time()
+        try:
+            actualiser_cours_internet(silencieux=(st.session_state.dernier_refresh_cours == 0))
+            st.session_state.dernier_refresh_cours = time.time()
+        except Exception as e:
+            logger.error(f"Erreur actualisation cours: {e}")
 
 initialize_state()
 
-# --- 5. LOGIQUE DES PAGES (UI) ---
+# --- 6. LOGIQUE DES PAGES (UI) ---
 
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
@@ -540,7 +620,7 @@ elif page_choisie == "📋 Liste des actifs":
 
     new_df = pd.concat([res_i, res_d], ignore_index=True)
     if not new_df[["Ticker", "Type", "Quantité", "Pourcentage (%)", "Devise Cotation"]].equals(st.session_state.donnees[["Ticker", "Type", "Quantité", "Pourcentage (%)", "Devise Cotation"]]):
-        st.session_state.donnees = new_df; recalculer_totaux_locaux(); save_sheet("Donnees", st.session_state.donnees); st.rerun()
+        st.session_state.donnees = new_df; recalculer_totaux_locaux(); safe_save_sheet("Donnees", st.session_state.donnees); st.rerun()
 
 elif page_choisie == "⚖️ Rééquilibrage":
     st.title("⚖️ Rééquilibrage & Transactions")
@@ -592,7 +672,7 @@ elif page_choisie == "⚖️ Rééquilibrage":
                         i_c = df_d.index[df_d['Ticker'] == t_dev].tolist()[0]
                         df_d.at[i_c, "Quantité"] = max(0.0, extraire_nombre(df_d.at[i_c, "Quantité"]) + (-m_n if t_ty == "Achat" else m_n))
                         
-                        st.session_state.donnees = nettoyer_dataframe(df_d); recalculer_totaux_locaux(); save_sheet("Donnees", st.session_state.donnees)
+                        st.session_state.donnees = nettoyer_dataframe(df_d); recalculer_totaux_locaux(); safe_save_sheet("Donnees", st.session_state.donnees)
                         st.success("✅ Transaction enregistrée !"); time.sleep(1); st.rerun()
                 except ValueError as e:
                     st.error(str(e))
@@ -679,7 +759,7 @@ elif page_choisie == "💰 Fonds":
                     idx_c = df_d.index[df_d['Ticker'] == dev].tolist()[0]
                     df_d.at[idx_c, "Quantité"] = max(0.0, extraire_nombre(df_d.at[idx_c, "Quantité"]) + (m_s if t_m == "Ajout de fond propre" else -m_s))
                     
-                    st.session_state.donnees = nettoyer_dataframe(df_d); recalculer_totaux_locaux(); save_sheet("Donnees", st.session_state.donnees)
+                    st.session_state.donnees = nettoyer_dataframe(df_d); recalculer_totaux_locaux(); safe_save_sheet("Donnees", st.session_state.donnees)
                     st.success("✅ Mouvement enregistré !"); time.sleep(1); st.rerun()
                 except ValueError as e:
                     st.error(str(e))
@@ -827,7 +907,7 @@ elif page_choisie == "🌴 Retraite":
     def on_retraite_params_change():
         for k in ["in_app", "in_tax"]:
             if k in st.session_state: st.session_state.config[k.replace("in_", "retraite_") + ("_mensuel" if "app" in k else "")] = st.session_state[k]
-        try: save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
+        try: safe_save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
         except: pass
 
     with c_p1:
@@ -939,7 +1019,7 @@ elif page_choisie == "🏛️ Fiscalité":
         }
         for in_key, out_key in key_mapping.items():
             if in_key in st.session_state: st.session_state.config[out_key] = st.session_state[in_key]
-        try: save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
+        try: safe_save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
         except: pass
 
     st.subheader("👤 1. Ma Situation Familiale")
