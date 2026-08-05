@@ -19,43 +19,6 @@ from tax_engine import calcul_frais_km, calcul_impot_ir, get_action_tax_data, ge
 # --- 1. CONFIGURATION ET CONSTANTES ---
 st.set_page_config(page_title="Mon Portefeuille", layout="wide")
 
-# ========== CSS RESPONSIVE (sans JavaScript) ==========
-st.markdown("""
-<style>
-/* Sur les écrans ≤ 768px (mobiles/tablettes), on force l'empilement des colonnes */
-@media screen and (max-width: 768px) {
-    /* Blocs horizontaux (st.columns) : chaque colonne passe à 100% de largeur */
-    div[data-testid="stHorizontalBlock"] {
-        flex-wrap: wrap !important;
-    }
-    div[data-testid="stHorizontalBlock"] > div {
-        min-width: 100% !important;
-        flex: 0 0 100% !important;
-    }
-
-    /* Graphiques Plotly : hauteur réduite pour un meilleur confort de défilement */
-    .js-plotly-plot, .plotly {
-        height: 280px !important;
-    }
-
-    /* Boutons radio : affichage vertical */
-    div[role="radiogroup"] {
-        flex-direction: column !important;
-    }
-
-    /* Tableaux : scroll horizontal si nécessaire */
-    .stDataFrame {
-        overflow-x: auto;
-    }
-
-    /* Métriques : taille de police un peu réduite */
-    .stMetric p {
-        font-size: 1.2rem !important;
-    }
-}
-</style>
-""", unsafe_allow_html=True)
-
 st.sidebar.title("Menu")
 page_choisie = st.sidebar.radio("Aller vers :", ["📊 Tableau de bord", "📋 Liste des actifs", "⚖️ Rééquilibrage", "💰 Fonds", "🏖️ Suivi", "📈 Performance", "🌴 Retraite", "🏛️ Fiscalité"])
 st.sidebar.divider()
@@ -73,6 +36,7 @@ FISCAL_DB = {
     2025: {"tax_lim_1": 11750.0, "tax_lim_2": 29957.0, "tax_lim_3": 85664.0, "tax_lim_4": 184261.0, "tax_rate_2": 0.11, "tax_rate_3": 0.30, "tax_rate_4": 0.41, "tax_rate_5": 0.45, "decote_lim_cel": 2083.0, "decote_base_cel": 943.0, "decote_lim_mar": 3432.0, "decote_base_mar": 1553.0, "tax_pfu": 30.0, "tax_ps": 17.2, "frais_repas": 5.50}
 }
 
+# Cache pour le taux EUR/USD
 @st.cache_data(ttl=3600)
 def get_eur_usd_rate():
     try:
@@ -107,6 +71,7 @@ def afficher_montant_double(label, montant_usd, delta_str="", couleur_valeur=Non
     st.markdown(f"""<div style="margin-bottom: 0.8rem;"><div style="font-size: {t_lbl}; opacity: 0.8; margin-bottom: 0.2rem;">{label}</div><div style="font-size: {t_val}; font-weight: 600; line-height: 1.2; {c_val}">{s_usd} $ <span style="font-size: 0.65em; opacity: 0.7; font-weight: 400;">/ {s_eur} €</span></div>{delta_html}</div>""", unsafe_allow_html=True)
 
 def recalculer_totaux_locaux():
+    """Recalcule Court et Valeur totale formatés, sans ajouter de colonnes numériques persistantes."""
     if "donnees" in st.session_state:
         df = st.session_state.donnees.copy()
         court_num = df.apply(
@@ -287,7 +252,7 @@ def initialize_state():
         st.session_state.donnees = nettoyer_dataframe(load_sheet("Donnees", ["Ticker", "Type", "Quantité", "Court", "Valeur totale", "Pourcentage (%)", "Devise Cotation"]))
         recalculer_totaux_locaux()
     else:
-        recalculer_totaux_locaux()
+        recalculer_totaux_locaux()  # S'assure que les colonnes formatées sont à jour
 
     if "historique" not in st.session_state:
         df_h = load_sheet("Historique", ["Date", "Type", "Montant $", "Montant €", "Montant Or"])
@@ -337,7 +302,8 @@ def initialize_state():
 
 initialize_state()
 
-# --- 5. LOGIQUE DES PAGES (UI) – version desktop avec CSS responsive intégré ---
+# --- 5. LOGIQUE DES PAGES (UI) ---
+
 if page_choisie == "📊 Tableau de bord":
     st.title("📊 Vue d'ensemble de mon Patrimoine")
     df_actuel, df_p = st.session_state.donnees, st.session_state.projections
@@ -849,8 +815,7 @@ elif page_choisie == "🌴 Retraite":
         df_historique = df_years[df_years['Année'] < annee_en_cours]
         if not df_historique.empty: moy_brute_hist = round(df_historique['Performance brute (%)'].mean(), 2)
 
-    st.subheader("⚙️ Paramètres du Simulateur")
-    c_p1, c_p2, c_p3 = st.columns(3)
+    st.subheader("⚙️ Paramètres du Simulateur"); c_p1, c_p2, c_p3 = st.columns(3)
     def on_retraite_params_change():
         for k in ["in_app", "in_tax"]:
             if k in st.session_state: st.session_state.config[k.replace("in_", "retraite_") + ("_mensuel" if "app" in k else "")] = st.session_state[k]
@@ -883,8 +848,7 @@ elif page_choisie == "🌴 Retraite":
         trajectory_data.append({"Année": y, "Capital Net (Scénario A)": round(cap_a_nom / ((1 + inf_rate)**years_diff), 2), "Capital Net (Scénario B)": round(cap_b_nom / ((1 + inf_rate)**years_diff), 2)})
 
     tx_r = max(0.0, ((1.08)/(1+inf_rate))-1)
-    st.subheader(f"🎯 Capital projeté au 1er Janvier {annee_retraite}")
-    colA, colB = st.columns(2)
+    st.subheader(f"🎯 Capital projeté au 1er Janvier {annee_retraite}"); colA, colB = st.columns(2)
     
     total_a = cap_v_a + gains_a; ratio_gains_a = gains_a / total_a if total_a > 0 else 0.0
     rente_br_a = (cap_a_nom / ((1 + inf_rate)**(annee_retraite - annee_en_cours))) * tx_r / 12
