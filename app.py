@@ -60,30 +60,22 @@ FISCAL_DB = {
 # --- SYSTÈME DE RÉCUPÉRATION AUTOMATIQUE DES BARÈMES FISCAUX ---
 @st.cache_data(ttl=86400 * 15, show_spinner=False)
 def get_fiscal_bars_for_year_cached(year):
-    """Version cachée (appelée en premier)"""
     return _fetch_fiscal_bars(year)
 
 def get_fiscal_bars_for_year(year):
-    """
-    Récupère les barèmes fiscaux avec retry à chaque connexion si le cache est expiré.
-    Retourne (barèmes, source, fiabilité)
-    """
     try:
         bars = get_fiscal_bars_for_year_cached(year)
         return bars, bars.get('_source', 'Cache local'), bars.get('_fiabilite', 'Élevée')
     except:
         pass
-    
     bars = _fetch_fiscal_bars(year)
     return bars, bars.get('_source', 'Estimation'), bars.get('_fiabilite', 'Moyenne')
 
 def _fetch_fiscal_bars(year):
-    """Fetch réel des barèmes (API > FISCAL_DB > Estimation)"""
     bars = None
     source = "Inconnue"
     fiabilite = "Faible"
     
-    # 1. Tenter l'API gouvernementale
     try:
         url = f"https://api.gouv.fr/impots/bareme/{year}"
         req = urllib.request.Request(url, headers={'User-Agent': 'MonPortefeuille/1.0'})
@@ -98,8 +90,7 @@ def _fetch_fiscal_bars(year):
                 "tax_rate_3": float(data['tranche3_taux']) / 100,
                 "tax_rate_4": float(data['tranche4_taux']) / 100,
                 "tax_rate_5": float(data['tranche5_taux']) / 100,
-                "tax_pfu": 30.0,
-                "tax_ps": 17.2,
+                "tax_pfu": 30.0, "tax_ps": 17.2,
                 "frais_repas": float(data.get('forfait_repas', 5.50))
             }
             source = "API gouvernementale"
@@ -107,46 +98,37 @@ def _fetch_fiscal_bars(year):
     except:
         pass
     
-    # 2. Fallback : FISCAL_DB (valeurs codées)
     if bars is None and year in FISCAL_DB:
         bars = FISCAL_DB[year].copy()
         source = "Base de données interne"
         fiabilite = "Exacte (vérifiée)"
     
-    # 3. Estimation basée sur l'inflation
     if bars is None and year > max(FISCAL_DB.keys()):
         last_year = max(FISCAL_DB.keys())
         base = FISCAL_DB[last_year].copy()
-        
         try:
             inflation_data = recuperer_inflation_france() or {}
             avg_inflation = sum(inflation_data.values()) / len(inflation_data) if inflation_data else 2.0
         except:
             avg_inflation = 2.0
-        
         inflation_factor = 1 + (avg_inflation / 100)
-        
         bars = {
             "tax_lim_1": round(base["tax_lim_1"] * inflation_factor, 0),
             "tax_lim_2": round(base["tax_lim_2"] * inflation_factor, 0),
             "tax_lim_3": round(base["tax_lim_3"] * inflation_factor, 0),
             "tax_lim_4": round(base["tax_lim_4"] * inflation_factor, 0),
-            "tax_rate_2": base["tax_rate_2"],
-            "tax_rate_3": base["tax_rate_3"],
-            "tax_rate_4": base["tax_rate_4"],
-            "tax_rate_5": base["tax_rate_5"],
+            "tax_rate_2": base["tax_rate_2"], "tax_rate_3": base["tax_rate_3"],
+            "tax_rate_4": base["tax_rate_4"], "tax_rate_5": base["tax_rate_5"],
             "decote_lim_cel": round(base["decote_lim_cel"] * inflation_factor, 0),
             "decote_base_cel": round(base["decote_base_cel"] * inflation_factor, 0),
             "decote_lim_mar": round(base["decote_lim_mar"] * inflation_factor, 0),
             "decote_base_mar": round(base["decote_base_mar"] * inflation_factor, 0),
-            "tax_pfu": base["tax_pfu"],
-            "tax_ps": base["tax_ps"],
+            "tax_pfu": base["tax_pfu"], "tax_ps": base["tax_ps"],
             "frais_repas": round(base["frais_repas"] * inflation_factor, 2)
         }
         source = "Estimation (inflation)"
         fiabilite = "Approximative"
     
-    # 4. Fallback ultime
     if bars is None:
         bars = FISCAL_DB.get(max(FISCAL_DB.keys()), FISCAL_DB[2025]).copy()
         source = "Fallback (dernière année connue)"
@@ -155,12 +137,11 @@ def _fetch_fiscal_bars(year):
     bars['_source'] = source
     bars['_fiabilite'] = fiabilite
     bars['_year'] = year
-    
     return bars
 
-# --- FONCTION DE CALCUL DE LA PERFORMANCE BRUTE MOYENNE (partagée) ---
+# --- FONCTIONS DE CALCUL PARTAGÉES ---
 def get_moyenne_performance_brute():
-    """Calcule la performance brute moyenne historique (utilisée par Retraite et Performance)."""
+    """Calcule la performance brute moyenne historique (identique à la page Performance)."""
     if "moyenne_perf_brute_cache" not in st.session_state:
         df_p = st.session_state.projections
         annee_en_cours = datetime.datetime.now().year
@@ -170,32 +151,30 @@ def get_moyenne_performance_brute():
             return 5.00
         
         df_viz = df_p.copy()
+        df_viz = df_viz.dropna(subset=['Date']).sort_values('Date')
         df_viz['Date_DT'] = pd.to_datetime(df_viz['Date'], dayfirst=True, errors='coerce')
         df_viz = df_viz.dropna(subset=['Date_DT']).sort_values('Date_DT')
         df_viz['Année'] = df_viz['Date_DT'].dt.year
+
+        df_lasts = df_viz.groupby('Année').last().reset_index()
+        twr_fin_annee = dict(zip(df_lasts['Année'], df_lasts['Score TWR %']))
         
-        df_years = df_viz.groupby('Année').last().reset_index()
+        perf_brutes = []
+        for _, row in df_lasts.iterrows():
+            annee_actuelle = row['Année']
+            twr_fin = row['Score TWR %']
+            if (annee_actuelle - 1) in twr_fin_annee:
+                twr_debut = twr_fin_annee[annee_actuelle - 1]
+                perf_annee = (((1 + twr_fin / 100) / (1 + twr_debut / 100)) - 1) * 100
+            else:
+                perf_annee = twr_fin
+            perf_brutes.append(perf_annee)
         
-        # Calcul des performances annuelles via TWR
-        if len(df_years) >= 2:
-            twr_fin_annee = dict(zip(df_years['Année'], df_years['Score TWR %']))
-            perfs = []
-            for _, row in df_years.iterrows():
-                annee = row['Année']
-                twr_fin = row['Score TWR %']
-                if (annee - 1) in twr_fin_annee:
-                    twr_debut = twr_fin_annee[annee - 1]
-                    perf = (((1 + twr_fin / 100) / (1 + twr_debut / 100)) - 1) * 100
-                else:
-                    perf = twr_fin
-                perfs.append(perf)
-            
-            df_years['Performance brute (%)'] = perfs
-        else:
-            df_years['Performance brute (%)'] = df_years['Score TWR %']
+        df_y = df_lasts.copy()
+        df_y['Année'] = df_y['Année'].astype(int)
+        df_y['Performance brute (%)'] = perf_brutes
         
-        # Filtrer les années complètes (hors année en cours)
-        df_hist = df_years[df_years['Année'] < annee_en_cours]
+        df_hist = df_y[df_y['Année'] < annee_en_cours]
         
         if not df_hist.empty:
             moyenne = round(df_hist['Performance brute (%)'].mean(), 2)
@@ -205,6 +184,27 @@ def get_moyenne_performance_brute():
         st.session_state.moyenne_perf_brute_cache = moyenne
     
     return st.session_state.moyenne_perf_brute_cache
+
+def get_moyenne_inflation():
+    """Calcule l'inflation moyenne historique."""
+    if "moyenne_inflation_cache" not in st.session_state:
+        df_inf = st.session_state.inflation
+        annee_en_cours = datetime.datetime.now().year
+        
+        if df_inf.empty:
+            st.session_state.moyenne_inflation_cache = 2.00
+            return 2.00
+        
+        df_hist = df_inf[df_inf['Année'] < annee_en_cours]
+        
+        if not df_hist.empty:
+            moyenne = round(df_hist['Inflation (%)'].mean(), 2)
+        else:
+            moyenne = 2.00
+        
+        st.session_state.moyenne_inflation_cache = moyenne
+    
+    return st.session_state.moyenne_inflation_cache
 
 @st.cache_data(ttl=3600)
 def get_eur_usd_rate():
@@ -547,9 +547,10 @@ def initialize_state():
         except Exception as e:
             logger.error(f"Erreur chargement transactions: {e}")
     
-    # Invalider le cache de performance si nécessaire
-    if "moyenne_perf_brute_cache" in st.session_state:
-        del st.session_state.moyenne_perf_brute_cache
+    # Invalider les caches de calcul
+    for cache_key in ["moyenne_perf_brute_cache", "moyenne_inflation_cache"]:
+        if cache_key in st.session_state:
+            del st.session_state[cache_key]
     
     if "dernier_refresh_cours" not in st.session_state:
         st.session_state.dernier_refresh_cours = 0
@@ -981,8 +982,9 @@ elif page_choisie == "🌴 Retraite":
     capital_initial = sum(extraire_nombre(r["Valeur totale"]) for _, r in df_actuel.iterrows() if extraire_nombre(r["Pourcentage (%)"]) > 0)
     annee_en_cours = datetime.datetime.now().year
     
-    # Utiliser la fonction partagée pour la performance brute moyenne
+    # Utiliser les fonctions partagées (identiques à la page Performance)
     moy_brute_hist = get_moyenne_performance_brute()
+    moy_inflation_hist = get_moyenne_inflation()
 
     st.subheader("⚙️ Paramètres"); c_p1, c_p2, c_p3 = st.columns(3)
     def on_retraite_params_change():
@@ -995,55 +997,73 @@ elif page_choisie == "🌴 Retraite":
         annee_retraite = st.number_input("Année de départ ✍️", min_value=annee_en_cours+1, max_value=2100, value=2055, step=1)
         apport_mensuel = st.number_input("Apport mensuel ($) ✍️", min_value=0.00, step=50.00, value=float(st.session_state.config.get("retraite_apport_mensuel", 250.0)), key="in_app", on_change=on_retraite_params_change)
     with c_p2:
-        # Scénario A : performance brute moyenne (non modifiable)
+        # Scénario A : performance brute moyenne (verrouillée) + inflation moyenne (automatique)
         st.markdown(f"""
         <div style="margin-bottom: 0.8rem;">
             <div style="font-size: 0.9rem; opacity: 0.8; margin-bottom: 0.2rem;">Scénario A (%) 🔒</div>
             <div style="font-size: 1.4rem; font-weight: 600; line-height: 1.2; color: #2ecc71;">
                 {format_smart(moy_brute_hist, '%')} <span style="font-size: 0.65em; opacity: 0.7; font-weight: 400;">(moyenne historique)</span>
             </div>
+            <div style="font-size: 0.8rem; opacity: 0.6; margin-top: 0.2rem;">
+                Inflation moyenne : {format_smart(moy_inflation_hist, '%')} (automatique)
+            </div>
         </div>
         """, unsafe_allow_html=True)
         rendement_a = moy_brute_hist
+        inflation_a = moy_inflation_hist  # Inflation automatique pour Scénario A
         
         # Scénario B : fixe modifiable
         rendement_b = st.number_input("Scénario B (%) ✍️", min_value=0.00, value=8.00, step=0.01)
     with c_p3:
-        inflation_estimee = st.number_input("Inflation estimée (%) ✍️", min_value=0.00, value=2.00, step=0.01)
+        inflation_estimee = st.number_input("Inflation Scénario B (%) ✍️", min_value=0.00, value=2.00, step=0.01)
         taxe_plus_value = st.number_input("Flat Tax (%) ✍️", min_value=0.00, max_value=60.00, step=0.10, value=float(st.session_state.config.get("retraite_taxe", float(st.session_state.config.get("tax_pfu", 30.0)))), key="in_tax", on_change=on_retraite_params_change)
     st.divider()
 
+    # Scénario A : utilise l'inflation moyenne historique
     cap_v_a = cap_v_b = capital_initial; gains_a = gains_b = 0.0; app_a = app_b = apport_mensuel
-    inf_rate, r_a, r_b = inflation_estimee / 100.0, rendement_a / 100.0, rendement_b / 100.0
-    r_a_m, r_b_m = (1 + r_a)**(1/12) - 1, (1 + r_b)**(1/12) - 1
+    inf_rate_a = inflation_a / 100.0  # Inflation automatique
+    inf_rate_b = inflation_estimee / 100.0  # Inflation manuelle
+    r_a = rendement_a / 100.0
+    r_b = rendement_b / 100.0
+    r_a_m = (1 + r_a)**(1/12) - 1
+    r_b_m = (1 + r_b)**(1/12) - 1
 
     trajectory_data = []
     for y in range(annee_en_cours, annee_retraite):
         for _ in range(12 if y > annee_en_cours else max(1, 13 - datetime.datetime.now().month)):
             int_a = (cap_v_a + gains_a) * r_a_m; gains_a += int_a; cap_v_a += app_a
             int_b = (cap_v_b + gains_b) * r_b_m; gains_b += int_b; cap_v_b += app_b
-        app_a *= (1 + inf_rate); app_b *= (1 + inf_rate); years_diff = y - annee_en_cours + 1
-        cap_a_nom, cap_b_nom = cap_v_a + gains_a, cap_v_b + gains_b
-        trajectory_data.append({"Année": y, "Capital Net (Scénario A)": round(cap_a_nom / ((1 + inf_rate)**years_diff), 2), "Capital Net (Scénario B)": round(cap_b_nom / ((1 + inf_rate)**years_diff), 2)})
+        app_a *= (1 + inf_rate_a)
+        app_b *= (1 + inf_rate_b)
+        years_diff_a = y - annee_en_cours + 1
+        years_diff_b = y - annee_en_cours + 1
+        cap_a_nom = cap_v_a + gains_a
+        cap_b_nom = cap_v_b + gains_b
+        trajectory_data.append({
+            "Année": y,
+            "Capital Net (Scénario A)": round(cap_a_nom / ((1 + inf_rate_a)**years_diff_a), 2),
+            "Capital Net (Scénario B)": round(cap_b_nom / ((1 + inf_rate_b)**years_diff_b), 2)
+        })
 
-    tx_r = max(0.0, ((1.08)/(1+inf_rate))-1)
+    tx_r_a = max(0.0, ((1.08)/(1+inf_rate_a))-1)
+    tx_r_b = max(0.0, ((1.08)/(1+inf_rate_b))-1)
     st.subheader(f"🎯 Capital projeté au 1er Janvier {annee_retraite}"); colA, colB = st.columns(2)
     
     total_a = cap_v_a + gains_a; ratio_gains_a = gains_a / total_a if total_a > 0 else 0.0
-    rente_br_a = (cap_a_nom / ((1 + inf_rate)**(annee_retraite - annee_en_cours))) * tx_r / 12
+    rente_br_a = (cap_a_nom / ((1 + inf_rate_a)**(annee_retraite - annee_en_cours))) * tx_r_a / 12
     with colA:
         st.markdown(f"### Scénario A (Moyenne historique : {format_smart(rendement_a, '%')} / an)")
         afficher_montant_double("💰 Valeur Brute", cap_a_nom)
-        afficher_montant_double("🛒 Valeur Nette", cap_a_nom / ((1 + inf_rate)**(annee_retraite - annee_en_cours)))
+        afficher_montant_double("🛒 Valeur Nette", cap_a_nom / ((1 + inf_rate_a)**(annee_retraite - annee_en_cours)))
         st.write(""); afficher_montant_double("Rente Mensuelle Nette", rente_br_a, couleur_valeur="#2ecc71")
         afficher_montant_double(f"Après Impôts ({format_smart(taxe_plus_value, '%')})", rente_br_a * (1 - (ratio_gains_a * taxe_plus_value / 100.0)), couleur_valeur="#e67e22", taille="medium")
 
     total_b = cap_v_b + gains_b; ratio_gains_b = gains_b / total_b if total_b > 0 else 0.0
-    rente_br_b = (cap_b_nom / ((1 + inf_rate)**(annee_retraite - annee_en_cours))) * tx_r / 12
+    rente_br_b = (cap_b_nom / ((1 + inf_rate_b)**(annee_retraite - annee_en_cours))) * tx_r_b / 12
     with colB:
         st.markdown(f"### Scénario B (Fixe : {format_smart(rendement_b, '%')} / an)")
         afficher_montant_double("💰 Valeur Brute", cap_b_nom)
-        afficher_montant_double("🛒 Valeur Nette", cap_b_nom / ((1 + inf_rate)**(annee_retraite - annee_en_cours)))
+        afficher_montant_double("🛒 Valeur Nette", cap_b_nom / ((1 + inf_rate_b)**(annee_retraite - annee_en_cours)))
         st.write(""); afficher_montant_double("Rente Mensuelle Nette", rente_br_b, couleur_valeur="#3498db")
         afficher_montant_double(f"Après Impôts ({format_smart(taxe_plus_value, '%')})", rente_br_b * (1 - (ratio_gains_b * taxe_plus_value / 100.0)), couleur_valeur="#e67e22", taille="medium")
 
@@ -1082,32 +1102,16 @@ elif page_choisie == "🏛️ Fiscalité":
         bars, source, fiabilite = get_fiscal_bars_for_year(annee_fiscale)
         
         if fiabilite == "Officielle":
-            emoji = "🟢"
-            border_color = "#28a745"
-            message = "Données fiscales officielles - Calcul fiable à 100%"
+            emoji = "🟢"; border_color = "#28a745"; message = "Données fiscales officielles - Calcul fiable à 100%"
         elif fiabilite in ["Exacte (vérifiée)", "Élevée"]:
-            emoji = "🟢"
-            border_color = "#28a745"
-            message = "Barèmes vérifiés - Calcul fiable"
+            emoji = "🟢"; border_color = "#28a745"; message = "Barèmes vérifiés - Calcul fiable"
         elif fiabilite in ["Approximative", "Moyenne"]:
-            emoji = "🟡"
-            border_color = "#ffc107"
-            message = "Barèmes estimés (basés sur l'inflation) - Calcul approximatif"
+            emoji = "🟡"; border_color = "#ffc107"; message = "Barèmes estimés (basés sur l'inflation) - Calcul approximatif"
         else:
-            emoji = "🔴"
-            border_color = "#dc3545"
-            message = "Barèmes potentiellement obsolètes - Calcul non fiable"
+            emoji = "🔴"; border_color = "#dc3545"; message = "Barèmes potentiellement obsolètes - Calcul non fiable"
         
         st.markdown(f"""
-        <div style="
-            background-color: #1e1e1e;
-            color: #ffffff;
-            border-radius: 10px; 
-            padding: 12px 16px; 
-            margin-bottom: 15px; 
-            border-left: 5px solid {border_color};
-            font-size: 0.95rem;
-        ">
+        <div style="background-color: #1e1e1e; color: #ffffff; border-radius: 10px; padding: 12px 16px; margin-bottom: 15px; border-left: 5px solid {border_color}; font-size: 0.95rem;">
             <strong>{emoji} Barèmes fiscaux {annee_fiscale}</strong><br>
             <span style="font-size: 0.85rem; opacity: 0.85;">Source : {source}</span><br>
             <span style="font-size: 0.85rem; opacity: 0.85;">{message}</span>
