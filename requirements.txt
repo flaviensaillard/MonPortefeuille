@@ -6,3 +6,4 @@ plotly
 streamlit-autorefresh
 supabase
 httpx
+starlette<1.4.0
