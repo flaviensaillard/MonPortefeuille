@@ -1020,39 +1020,31 @@ elif page_choisie == "🏛️ Fiscalité":
         
         annee_fiscale = st.selectbox("📅 Année des revenus :", annees_dispos, index=idx_defaut, key="annee_fiscale_select", on_change=on_year_change)
         
-                # --- BANNIÈRE D'INFORMATION SUR LA SOURCE DES BARÈMES ---
+                       # --- BANNIÈRE D'INFORMATION SUR LA SOURCE DES BARÈMES ---
         bars, source, fiabilite = get_fiscal_bars_for_year(annee_fiscale)
         
         # Déterminer le style selon la fiabilité
         if fiabilite == "Officielle":
             emoji = "🟢"
-            bg_color = "#d4edda"  # Fond vert clair
-            text_color = "#155724"  # Texte vert foncé
             border_color = "#28a745"
             message = "Données fiscales officielles - Calcul fiable à 100%"
         elif fiabilite in ["Exacte (vérifiée)", "Élevée"]:
             emoji = "🟢"
-            bg_color = "#d4edda"
-            text_color = "#155724"
             border_color = "#28a745"
             message = "Barèmes vérifiés - Calcul fiable"
         elif fiabilite in ["Approximative", "Moyenne"]:
             emoji = "🟡"
-            bg_color = "#fff3cd"  # Fond jaune clair
-            text_color = "#856404"  # Texte jaune foncé
             border_color = "#ffc107"
             message = "Barèmes estimés (basés sur l'inflation) - Calcul approximatif"
         else:
             emoji = "🔴"
-            bg_color = "#f8d7da"  # Fond rouge clair
-            text_color = "#721c24"  # Texte rouge foncé
             border_color = "#dc3545"
             message = "Barèmes potentiellement obsolètes - Calcul non fiable"
         
         st.markdown(f"""
         <div style="
-            background-color: {bg_color}; 
-            color: {text_color};
+            background-color: #1e1e1e;
+            color: #ffffff;
             border-radius: 10px; 
             padding: 12px 16px; 
             margin-bottom: 15px; 
@@ -1060,8 +1052,8 @@ elif page_choisie == "🏛️ Fiscalité":
             font-size: 0.95rem;
         ">
             <strong>{emoji} Barèmes fiscaux {annee_fiscale}</strong><br>
-            <span style="font-size: 0.85rem; opacity: 0.9;">Source : {source}</span><br>
-            <span style="font-size: 0.85rem; opacity: 0.9;">{message}</span>
+            <span style="font-size: 0.85rem; opacity: 0.85;">Source : {source}</span><br>
+            <span style="font-size: 0.85rem; opacity: 0.85;">{message}</span>
         </div>
         """, unsafe_allow_html=True)
         
