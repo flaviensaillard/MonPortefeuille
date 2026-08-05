@@ -6,16 +6,36 @@ from utils import extraire_nombre, format_smart, est_devise_liquide, is_crypto_t
 from api_client import get_historical_fx, get_historical_usd_rate, get_bulk_crypto_prices
 
 # Cache global pour les taux de change (évite les appels répétés)
+# Cache local pour les taux de change
 _fx_cache = {}
 
 def _cached_fx(devise, date_str, against="EUR"):
-    """Cache local pour les taux de change."""
-    key = f"{devise}_{date_str}_{against}"
+    """Cache local pour les taux de change - corrigé."""
+    # Si c'est la devise de référence, retourner 1.0
+    d_clean = str(devise).upper().strip()
+    if d_clean == against or d_clean == "":
+        return 1.0
+    
+    key = f"{d_clean}_{date_str}_{against}"
     if key not in _fx_cache:
-        if against == "EUR":
-            _fx_cache[key] = get_historical_fx(devise, date_str, strict=False)
-        else:
-            _fx_cache[key] = get_historical_usd_rate(devise, date_str, strict=False)
+        # Appeler directement l'API sans repasser par le cache api_client
+        ticker = f"{d_clean}{against}=X"
+        try:
+            import yfinance as yf
+            d = pd.to_datetime(date_str, dayfirst=True, errors='coerce')
+            if pd.isna(d):
+                _fx_cache[key] = 1.0
+            elif d >= pd.Timestamp.now() - pd.Timedelta(days=1):
+                h = yf.Ticker(ticker).history(period="1d")
+                _fx_cache[key] = float(h['Close'].iloc[-1]) if not h.empty else 1.0
+            else:
+                start = (d - pd.Timedelta(days=5)).strftime('%Y-%m-%d')
+                end = (d + pd.Timedelta(days=1)).strftime('%Y-%m-%d')
+                h = yf.Ticker(ticker).history(start=start, end=end)
+                _fx_cache[key] = float(h['Close'].iloc[-1]) if not h.empty else 1.0
+        except:
+            _fx_cache[key] = 1.0
+    
     return _fx_cache[key]
 
 def calcul_frais_km(km, cv):
