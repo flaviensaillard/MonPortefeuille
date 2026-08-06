@@ -697,7 +697,6 @@ elif page_choisie == "⚖️ Rééquilibrage":
             besoin = abs(ecart_absolu_pct)>=2.0 and abs(d)>=1000.0
             action_txt = f"{'🟢 ACHETER' if d>0 else '🔴 VENDRE'} {format_smart(abs(d),'$')}" if besoin else f"✅ ÉQUILIBRÉ ({format_smart(abs(d),'$')})"
             current_pru_usd, _ = get_pru_and_qty(t,st.session_state.transactions)
-            # Haute précision pour PRU et quantités crypto
             res.append({
                 "Ticker 🔒": t, 
                 "PRU ($) 🔒": format_smart(current_pru_usd, "$", is_price=True, high_precision=True), 
@@ -1105,7 +1104,7 @@ elif page_choisie == "🏛️ Fiscalité":
                 st.markdown(f"- **521** : `{format_smart(acq_totale,'€')}`")
                 st.info(f"**Bilan :** {format_smart(pv_totale,'€',force_sign=True)}")
 
-           with st.expander("📁 Formulaire 2086 (Cryptomonnaies)", expanded=False):
+    with st.expander("📁 Formulaire 2086 (Cryptomonnaies)", expanded=False):
         if df_cryptos.empty:
             st.info("Aucune cession de cryptomonnaie détectée pour cette année.")
         else:
