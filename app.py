@@ -1105,7 +1105,7 @@ elif page_choisie == "🏛️ Fiscalité":
                 st.markdown(f"- **521** : `{format_smart(acq_totale,'€')}`")
                 st.info(f"**Bilan :** {format_smart(pv_totale,'€',force_sign=True)}")
 
-        with st.expander("📁 Formulaire 2086 (Cryptomonnaies)", expanded=False):
+           with st.expander("📁 Formulaire 2086 (Cryptomonnaies)", expanded=False):
         if df_cryptos.empty:
             st.info("Aucune cession de cryptomonnaie détectée pour cette année.")
         else:
