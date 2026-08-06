@@ -1040,7 +1040,6 @@ elif page_choisie == "🏛️ Fiscalité":
         key="in_parts",
         on_change=update_fiscal_config
     )
-    # Sauvegarde automatique si modifié
     if "f_parts" not in st.session_state.config or st.session_state.config["f_parts"] != parts:
         st.session_state.config["f_parts"] = parts
         save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
@@ -1355,9 +1354,26 @@ elif page_choisie == "🏛️ Fiscalité":
     st.metric("Taux moyen du foyer", f"{format_smart(taux_moyen_foyer, '%')}")
     st.caption(f"Taux marginal d'imposition : {taux_marginal}")
 
-    # Taux de prélèvement à la source personnalisé (taux du foyer)
+    # --- Taux de prélèvement à la source personnalisé ---
     if revenu_global > 0:
-        st.info(f"👨‍👩‍👧‍👦 **Taux de prélèvement à la source personnalisé (taux neutre) :** {format_smart(taux_moyen_foyer, '%')}")
-        st.caption("Il s'agit du taux de PAS individualisé par défaut pour chaque conjoint. Pour un taux différencié, utilisez votre espace impots.gouv.fr.")
+        st.info(f"👨‍👩‍👧‍👦 **Taux de PAS neutre (foyer) :** {format_smart(taux_moyen_foyer, '%')}")
+        if "Marié" in statut:
+            # Revenu individuel net du déclarant 1
+            rev1 = salaire_1_val - max(salaire_1_val * 0.10, frais_reels_1_val)
+            imp1 = calcul_impot_ir(rev1, 1.0, "Célibataire", apply_decote=False)
+            taux1 = (imp1 / salaire_1_val * 100) if salaire_1_val > 0 else 0.0
+            # Revenu individuel net du déclarant 2
+            rev2 = salaire_2_val - max(salaire_2_val * 0.10, frais_reels_2_val)
+            imp2 = calcul_impot_ir(rev2, 1.0, "Célibataire", apply_decote=False)
+            taux2 = (imp2 / salaire_2_val * 100) if salaire_2_val > 0 else 0.0
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                st.info(f"👤 **Taux personnalisé estimé (Vous) :** {format_smart(taux1, '%')}")
+            with col_t2:
+                st.info(f"👤 **Taux personnalisé estimé (Conjoint) :** {format_smart(taux2, '%')}")
+            st.caption("Estimation basée sur les revenus individuels avec 1 part. Le taux officiel peut varier.")
+        else:
+            st.info(f"👤 **Taux personnalisé estimé :** {format_smart(taux_moyen_foyer, '%')}")
     else:
+        st.info("Aucun revenu saisi.")
         st.info("Aucun revenu saisi.")
