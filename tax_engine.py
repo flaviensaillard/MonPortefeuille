@@ -200,7 +200,7 @@ def get_action_tax_data(df_transactions, target_year):
                     results.append({
                         "Actif": t,
                         "Date de vente": row['Date'],
-                        "Quantité vendue": format_smart(qte, is_price=True),
+                        "Quantité vendue": format_smart(qte, is_price=True, high_precision=True),
                         "PRU d'Acquisition (€)": format_smart(pru_eur, "€", is_price=True),
                         "Prix de revente net (€)": format_smart(net_eur, "€", is_price=True),
                         "Plus-value (€)": format_smart(pv_eur, "€"),
