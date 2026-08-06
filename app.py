@@ -837,13 +837,14 @@ elif page_choisie == "🌴 Retraite":
     cap_net_a = cap_a_nom / ((1+inf_rate_a)**years_diff)
     cap_net_b = cap_b_nom / ((1+inf_rate_b)**years_diff)
 
-    # Taux de rente réelle
-    tx_r_a = max(0.0, ((1.08)/(1+inf_rate_a))-1)
-    tx_r_b = max(0.0, ((1.08)/(1+inf_rate_b))-1)
+    # Rendement réel (net d'inflation)
+    r_reel_a = (1 + r_a) / (1 + inf_rate_a) - 1
+    r_reel_b = (1 + r_b) / (1 + inf_rate_b) - 1
 
-    # Rentes basées sur le capital NET (pouvoir d'achat d'aujourd'hui)
-    rente_br_a = cap_net_a * tx_r_a / 12
-    rente_br_b = cap_net_b * tx_r_b / 12
+    # Rente perpétuelle = Capital × Rendement réel
+    # On ne retire que les intérêts, le capital reste intact
+    rente_br_a = cap_net_a * max(0, r_reel_a) / 12
+    rente_br_b = cap_net_b * max(0, r_reel_b) / 12
 
     # Parts de plus-value
     total_a = cap_v_a
@@ -863,6 +864,7 @@ elif page_choisie == "🌴 Retraite":
 
     with colA:
         st.markdown(f"### Scénario A ({format_smart(rendement_a,'%')}/an, infl. {format_smart(inflation_a,'%')})")
+        st.caption(f"Rendement réel : {format_smart(r_reel_a*100,'%')} | Rente = Capital × Rendement réel")
         afficher_montant_double("💰 Capital Brut Final (dollars futurs)", cap_a_nom)
         afficher_montant_double("🛒 Capital Net (pouvoir d'achat actuel)", cap_net_a)
         st.write("")
@@ -876,6 +878,7 @@ elif page_choisie == "🌴 Retraite":
 
     with colB:
         st.markdown(f"### Scénario B ({format_smart(rendement_b,'%')}/an, infl. {format_smart(inflation_estimee,'%')})")
+        st.caption(f"Rendement réel : {format_smart(r_reel_b*100,'%')} | Rente = Capital × Rendement réel")
         afficher_montant_double("💰 Capital Brut Final (dollars futurs)", cap_b_nom)
         afficher_montant_double("🛒 Capital Net (pouvoir d'achat actuel)", cap_net_b)
         st.write("")
