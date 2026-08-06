@@ -116,7 +116,6 @@ def _fetch_fiscal_bars(year):
 
 # --- FONCTIONS DE CALCUL PARTAGÉES ---
 def calculer_performances_annuelles():
-    """Calcule les performances annuelles avec moyennes géométriques (CAGR)."""
     if "perf_data" not in st.session_state:
         df_p = st.session_state.projections
         annee_en_cours = datetime.datetime.now().year
@@ -138,12 +137,10 @@ def calculer_performances_annuelles():
             perf_brutes.append(perf_annee)
         df_y = df_lasts.copy(); df_y['Année'] = df_y['Année'].astype(int)
         df_y['Performance brute (%)'] = perf_brutes
-        # Annualisation première année partielle
         jours_annee_1 = (df_viz[df_viz['Année']==df_viz['Date_DT'].min().year]['Date_DT'].max()-df_viz['Date_DT'].min()).days
         if jours_annee_1>0 and jours_annee_1<330 and not df_y[df_y['Année']==df_viz['Date_DT'].min().year].empty:
             p = df_y.loc[df_y['Année']==df_viz['Date_DT'].min().year,'Performance brute (%)'].values[0]
             df_y.loc[df_y['Année']==df_viz['Date_DT'].min().year,'Performance brute (%)'] = (((1+p/100)**(365.25/jours_annee_1))-1)*100
-        # Inflation
         df_inf = st.session_state.inflation.copy()
         if not df_inf.empty:
             df_inf['Année'] = df_inf['Année'].astype(int)
@@ -152,21 +149,17 @@ def calculer_performances_annuelles():
         df_y['Performance nette (%)'] = (((1+df_y['Performance brute (%)']/100)/(1+df_y['Inflation (%)']/100))-1)*100
         df_y['Gains Nets ($)'] = df_y['Evolution cumulée $'] - df_y['Evolution cumulée $'].shift(1).fillna(0)
         
-        # Moyennes géométriques (CAGR)
         df_hist = df_y[df_y['Année'] < annee_en_cours]
         if not df_hist.empty and len(df_hist) > 0:
             n = len(df_hist)
-            # CAGR Brut
             produit_brut = 1.0
             for perf in df_hist['Performance brute (%)']:
                 produit_brut *= (1 + perf/100)
             moyenne_brute = round((produit_brut ** (1/n) - 1) * 100, 2) if produit_brut > 0 else 5.00
-            # CAGR Inflation
             produit_inf = 1.0
             for inf in df_hist['Inflation (%)']:
                 produit_inf *= (1 + inf/100)
             moyenne_inflation = round((produit_inf ** (1/n) - 1) * 100, 2) if produit_inf > 0 else 2.00
-            # CAGR Net
             produit_net = 1.0
             for perf in df_hist['Performance nette (%)']:
                 produit_net *= (1 + perf/100)
@@ -704,7 +697,17 @@ elif page_choisie == "⚖️ Rééquilibrage":
             besoin = abs(ecart_absolu_pct)>=2.0 and abs(d)>=1000.0
             action_txt = f"{'🟢 ACHETER' if d>0 else '🔴 VENDRE'} {format_smart(abs(d),'$')}" if besoin else f"✅ ÉQUILIBRÉ ({format_smart(abs(d),'$')})"
             current_pru_usd, _ = get_pru_and_qty(t,st.session_state.transactions)
-            res.append({"Ticker 🔒":t,"PRU ($) 🔒":format_smart(current_pru_usd,"$",is_price=True),"Var. Jour 🔒":st.session_state.variations.get(t,"→ 0.00 %"),"Perf. Globale 🔒":format_smart(((p/current_pru_usd)-1)*100,"%",force_sign=True) if current_pru_usd>0 and p>0 else "N/A","Actuel ($) 🔒":format_smart(act,"$"),"Écart (%) 🔒":format_smart(ecart_absolu_pct,"%",force_sign=True),"Action 🔒":action_txt,"Qté (+/-) 🔒":f"({'+ ' if q>0.000001 else '- ' if q<-0.000001 else ''}{format_smart(abs(q),is_price=True)})"})
+            # Haute précision pour PRU et quantités crypto
+            res.append({
+                "Ticker 🔒": t, 
+                "PRU ($) 🔒": format_smart(current_pru_usd, "$", is_price=True, high_precision=True), 
+                "Var. Jour 🔒": st.session_state.variations.get(t, "→ 0.00 %"), 
+                "Perf. Globale 🔒": format_smart(((p/current_pru_usd)-1)*100, "%", force_sign=True) if current_pru_usd>0 and p>0 else "N/A", 
+                "Actuel ($) 🔒": format_smart(act, "$"), 
+                "Écart (%) 🔒": format_smart(ecart_absolu_pct, "%", force_sign=True), 
+                "Action 🔒": action_txt, 
+                "Qté (+/-) 🔒": f"({'+ ' if q>0.000001 else '- ' if q<-0.000001 else ''}{format_smart(abs(q), is_price=True, high_precision=True)})"
+            })
         def cr(v): return 'color:#2ecc71' if "↗" in str(v) or "ACHETER" in str(v) or "+" in str(v) else ('color:#e74c3c' if "↘" in str(v) or "VENDRE" in str(v) or "-" in str(v) else 'color:#95a5a6')
         st.dataframe(pd.DataFrame(res).style.map(cr,subset=["Var. Jour 🔒","Action 🔒","Qté (+/-) 🔒","Perf. Globale 🔒"]),use_container_width=True,hide_index=True)
 
@@ -865,19 +868,15 @@ elif page_choisie == "🌴 Retraite":
     cap_b_nom = cap_v_b
     total_apports = total_apports_passes+total_apports_futurs
 
-    # Capital net (pouvoir d'achat d'aujourd'hui)
     cap_net_a = cap_a_nom / ((1+inf_rate_a)**years_diff)
     cap_net_b = cap_b_nom / ((1+inf_rate_b)**years_diff)
 
-    # Rendement réel (net d'inflation)
     r_reel_a = (1 + r_a) / (1 + inf_rate_a) - 1
     r_reel_b = (1 + r_b) / (1 + inf_rate_b) - 1
 
-    # Rente perpétuelle = Capital × Rendement réel
     rente_br_a = cap_net_a * max(0, r_reel_a) / 12
     rente_br_b = cap_net_b * max(0, r_reel_b) / 12
 
-    # Parts de plus-value
     total_a = cap_v_a
     total_b = cap_v_b
     plus_value_a = max(0, total_a - total_apports)
@@ -885,7 +884,6 @@ elif page_choisie == "🌴 Retraite":
     part_plus_value_a = (plus_value_a/total_a*100) if total_a>0 else 0
     part_plus_value_b = (plus_value_b/total_b*100) if total_b>0 else 0
 
-    # Impôts et rentes nettes
     impot_a = rente_br_a * (part_plus_value_a/100) * (taxe_plus_value/100)
     impot_b = rente_br_b * (part_plus_value_b/100) * (taxe_plus_value/100)
     rente_nette_a = rente_br_a - impot_a
