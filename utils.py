@@ -2,36 +2,36 @@ import pandas as pd
 import numpy as np
 import re
 
-def format_smart(val, symbol="", force_sign=False, is_price=False):
+def format_smart(val, symbol="", force_sign=False, is_price=False, high_precision=False):
     if pd.isna(val) or str(val).strip() == "":
         return ""
     try:
         v = float(val)
-        # Pourcentage : toujours 2 décimales
+
+        # Pourcentages : toujours 2 décimales, pas de suppression de zéros
         if symbol == "%":
             dec = 2
         else:
-            dec = 6  # on part toujours sur 6 décimales maxi
+            dec = 6 if high_precision else 2
 
         s = f"{v:+,.{dec}f}" if force_sign else f"{v:,.{dec}f}"
         parts = s.split('.')
         int_part = parts[0].replace(',', ' ')
         if len(parts) > 1:
             frac_part = parts[1]
-            # Supprime les zéros à droite SAUF pour les pourcentages
-            if symbol != "%":
+            if symbol == "%":
+                # Pourcentage : on garde exactement 2 chiffres après la virgule
+                frac_part = frac_part[:2].ljust(2, '0')
+            else:
+                # On supprime les zéros inutiles à droite
                 frac_part = frac_part.rstrip('0')
-                # Si après suppression il ne reste rien, on remet "00"
-                if len(frac_part) == 0:
-                    frac_part = "00"
-                # Si une seule décimale, on complète à 2
-                elif len(frac_part) == 1:
-                    frac_part += "0"
+                # On s'assure d'avoir au moins 2 chiffres après la virgule
+                if len(frac_part) < 2:
+                    frac_part = frac_part.ljust(2, '0')
             num_str = f"{int_part}.{frac_part}"
         else:
             num_str = f"{int_part}.00"
 
-        # Supprime le +0.00 inutile
         if num_str in ['+.00', '-.00', '+0.00', '-0.00', '.00']:
             num_str = "0.00"
 
