@@ -1119,6 +1119,41 @@ elif page_choisie == "🏛️ Fiscalité":
                 st.markdown(f"- **522 - Frais d'acquisition :** `0 €` *(Déjà inclus dans le PRU)*")
                 st.info(f"**Bilan pour {actif} :** {format_smart(pv_totale, '€', force_sign=True)}")
 
+            st.markdown("### 🧭 Le GPS Fiscal : Cadres 11 et 12 (Imputation des pertes)")
+            if bilan_net_actions < 0:
+                st.info(f"**Diagnostic :** Vous êtes en perte nette globale sur l'année ({format_smart(bilan_net_actions, '€')}).")
+                st.markdown(f"1. Laissez le **Cadre 11** de la 2074 totalement **VIDE**.")
+                st.markdown(f"2. Allez au **Cadre 12** (« Situation au 31/12/{annee_fiscale} »).")
+                st.markdown(f"3. Dans la case de l'année **{annee_fiscale}**, reportez : `{format_smart(abs(bilan_net_actions), '€')}`.")
+            elif bilan_net_actions > 0 and moins_values_actions > 0:
+                st.success(f"**Diagnostic :** Vous êtes en gain net sur l'année, mais vous avez subi des pertes ({format_smart(moins_values_actions, '€')}) qu'il faut imputer sur vos gains.")
+                st.markdown("⚠️ **Laissez le Bloc 1132 TOTALEMENT VIDE.**")
+                st.markdown("👉 **Rendez-vous au Bloc 1133.**")
+                
+                mv_restante = moins_values_actions
+                lignes_cadre_11 = []
+                for _, row in df_a_net_per_asset[df_a_net_per_asset["PV Num"] > 0].iterrows():
+                    pv_actif = row["PV Num"]
+                    imput = min(pv_actif, mv_restante)
+                    mv_restante -= imput
+                    col_c = pv_actif - imput
+                    lignes_cadre_11.append({
+                        "Titre (Bloc 1133)": row["Actif"],
+                        "Col A (Gain)": format_smart(pv_actif, "€"),
+                        "Col B (Perte imputée)": format_smart(imput, "€"),
+                        "Col C (A - B)": format_smart(col_c, "€"),
+                        "Col D (Pertes antérieures)": "0 € *",
+                        "Col E (C - D)": format_smart(col_c, "€"),
+                        "Col F/G (Abattement)": "0 €" if choix == "PFU" else "À calculer"
+                    })
+                st.dataframe(pd.DataFrame(lignes_cadre_11), hide_index=True, use_container_width=True)
+            elif bilan_net_actions > 0 and moins_values_actions == 0:
+                st.success(f"**Diagnostic :** Vous êtes en gain net sur l'année et vous n'avez fait AUCUNE perte boursière.")
+                if choix == "PFU":
+                    st.markdown(f"1. **Flat Tax (PFU)** : Dans le **Cadre 11**, remplissez uniquement la **Colonne A** (et **C/E** avec la même valeur).")
+                else:
+                    st.markdown(f"1. **Barème Progressif** : Dans le **Cadre 11**, remplissez la **Colonne A** (et **C/E** avec la même valeur). Remplissez **les colonnes F ou G** selon la durée de détention.")
+
     with st.expander("📁 Formulaire 2086 (Cryptomonnaies)", expanded=False):
         if df_cryptos.empty:
             st.info("Aucune cession de cryptomonnaie détectée pour cette année.")
