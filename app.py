@@ -116,12 +116,12 @@ def _fetch_fiscal_bars(year):
 
 # --- FONCTIONS DE CALCUL PARTAGÉES ---
 def calculer_performances_annuelles():
-    """Calcule les performances annuelles avec moyenne géométrique (CAGR)."""
+    """Calcule les performances annuelles avec moyennes géométriques (CAGR)."""
     if "perf_data" not in st.session_state:
         df_p = st.session_state.projections
         annee_en_cours = datetime.datetime.now().year
         if df_p.empty:
-            st.session_state.perf_data = {"df_y": pd.DataFrame(), "moyenne_brute": 5.00, "moyenne_inflation": 2.00}
+            st.session_state.perf_data = {"df_y": pd.DataFrame(), "moyenne_brute": 5.00, "moyenne_inflation": 2.00, "moyenne_nette": 3.00}
             return
         df_viz = df_p.copy(); df_viz['Date_DT'] = pd.to_datetime(df_viz['Date'], dayfirst=True, errors='coerce')
         df_viz = df_viz.dropna(subset=['Date_DT']).sort_values('Date_DT')
@@ -138,7 +138,7 @@ def calculer_performances_annuelles():
             perf_brutes.append(perf_annee)
         df_y = df_lasts.copy(); df_y['Année'] = df_y['Année'].astype(int)
         df_y['Performance brute (%)'] = perf_brutes
-        # Annualisation de la première année partielle
+        # Annualisation première année partielle
         jours_annee_1 = (df_viz[df_viz['Année']==df_viz['Date_DT'].min().year]['Date_DT'].max()-df_viz['Date_DT'].min()).days
         if jours_annee_1>0 and jours_annee_1<330 and not df_y[df_y['Année']==df_viz['Date_DT'].min().year].empty:
             p = df_y.loc[df_y['Année']==df_viz['Date_DT'].min().year,'Performance brute (%)'].values[0]
@@ -152,34 +152,34 @@ def calculer_performances_annuelles():
         df_y['Performance nette (%)'] = (((1+df_y['Performance brute (%)']/100)/(1+df_y['Inflation (%)']/100))-1)*100
         df_y['Gains Nets ($)'] = df_y['Evolution cumulée $'] - df_y['Evolution cumulée $'].shift(1).fillna(0)
         
-        # --- MOYENNE GÉOMÉTRIQUE (CAGR) au lieu de la moyenne arithmétique ---
+        # Moyennes géométriques (CAGR)
         df_hist = df_y[df_y['Année'] < annee_en_cours]
         if not df_hist.empty and len(df_hist) > 0:
-            # CAGR = ((1+r1) × (1+r2) × ... × (1+rn))^(1/n) - 1
-            produit = 1.0
-            for perf in df_hist['Performance brute (%)']:
-                produit *= (1 + perf/100)
             n = len(df_hist)
-            if produit > 0:
-                moyenne_brute = round((produit ** (1/n) - 1) * 100, 2)
-            else:
-                moyenne_brute = 5.00
-        else:
-            moyenne_brute = 5.00
-        
-        # Moyenne géométrique pour l'inflation aussi
-        if not df_hist.empty and len(df_hist) > 0:
+            # CAGR Brut
+            produit_brut = 1.0
+            for perf in df_hist['Performance brute (%)']:
+                produit_brut *= (1 + perf/100)
+            moyenne_brute = round((produit_brut ** (1/n) - 1) * 100, 2) if produit_brut > 0 else 5.00
+            # CAGR Inflation
             produit_inf = 1.0
             for inf in df_hist['Inflation (%)']:
                 produit_inf *= (1 + inf/100)
-            if produit_inf > 0:
-                moyenne_inflation = round((produit_inf ** (1/n) - 1) * 100, 2)
-            else:
-                moyenne_inflation = 2.00
+            moyenne_inflation = round((produit_inf ** (1/n) - 1) * 100, 2) if produit_inf > 0 else 2.00
+            # CAGR Net
+            produit_net = 1.0
+            for perf in df_hist['Performance nette (%)']:
+                produit_net *= (1 + perf/100)
+            moyenne_nette = round((produit_net ** (1/n) - 1) * 100, 2) if produit_net > 0 else 3.00
         else:
-            moyenne_inflation = 2.00
+            moyenne_brute = 5.00; moyenne_inflation = 2.00; moyenne_nette = 3.00
         
-        st.session_state.perf_data = {"df_y": df_y, "moyenne_brute": moyenne_brute, "moyenne_inflation": moyenne_inflation}
+        st.session_state.perf_data = {
+            "df_y": df_y, 
+            "moyenne_brute": moyenne_brute, 
+            "moyenne_inflation": moyenne_inflation,
+            "moyenne_nette": moyenne_nette
+        }
 
 def get_moyenne_performance_brute():
     if "perf_data" not in st.session_state: calculer_performances_annuelles()
@@ -188,6 +188,10 @@ def get_moyenne_performance_brute():
 def get_moyenne_inflation():
     if "perf_data" not in st.session_state: calculer_performances_annuelles()
     return st.session_state.perf_data["moyenne_inflation"]
+
+def get_moyenne_nette():
+    if "perf_data" not in st.session_state: calculer_performances_annuelles()
+    return st.session_state.perf_data["moyenne_nette"]
 
 def get_perf_data():
     if "perf_data" not in st.session_state: calculer_performances_annuelles()
@@ -759,13 +763,13 @@ elif page_choisie == "📈 Performance":
         try: or_px = float(yf.Ticker("GC=F").fast_info.get('lastPrice',2000.0))
         except: or_px = 2000.0
         df_y['Valeur Bilan (Or)'] = df_y['Actifs Stratégiques']/or_px
-        st.subheader("📊 Moyennes Historiques")
+        st.subheader("📊 Moyennes Historiques (CAGR)")
         df_hist = df_y[df_y['Année']<datetime.datetime.now().year].copy()
         if not df_hist.empty:
             c_m1,c_m2,c_m3,c_m4 = st.columns(4)
-            c_m1.metric("Perf. Brute (CAGR)",format_smart(perf_data["moyenne_brute"],"%",force_sign=True))
-            c_m2.metric("Inflation (CAGR)",format_smart(perf_data["moyenne_inflation"],"%"))
-            c_m3.metric("Perf. Nette",format_smart(df_hist['Performance nette (%)'].mean(),"%",force_sign=True))
+            c_m1.metric("Perf. Brute",format_smart(perf_data["moyenne_brute"],"%",force_sign=True))
+            c_m2.metric("Inflation",format_smart(perf_data["moyenne_inflation"],"%"))
+            c_m3.metric("Perf. Nette",format_smart(perf_data["moyenne_nette"],"%",force_sign=True))
             with c_m4: afficher_montant_double("Gains / An",df_hist['Gains Nets ($)'].mean(),taille="medium")
         else: st.info("Historique insuffisant.")
         st.divider(); st.write("Résultats par année civile.")
@@ -869,7 +873,7 @@ elif page_choisie == "🌴 Retraite":
     r_reel_a = (1 + r_a) / (1 + inf_rate_a) - 1
     r_reel_b = (1 + r_b) / (1 + inf_rate_b) - 1
 
-    # Rente perpétuelle = Capital × Rendement réel (intérêts seulement, capital intact)
+    # Rente perpétuelle = Capital × Rendement réel
     rente_br_a = cap_net_a * max(0, r_reel_a) / 12
     rente_br_b = cap_net_b * max(0, r_reel_b) / 12
 
