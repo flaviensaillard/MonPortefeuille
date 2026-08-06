@@ -1105,17 +1105,30 @@ elif page_choisie == "🏛️ Fiscalité":
                 st.markdown(f"- **521** : `{format_smart(acq_totale,'€')}`")
                 st.info(f"**Bilan :** {format_smart(pv_totale,'€',force_sign=True)}")
 
-    with st.expander("📁 Formulaire 2086 (Cryptomonnaies)",expanded=False):
-        if df_cryptos.empty: st.info("Aucune cession.")
+        with st.expander("📁 Formulaire 2086 (Cryptomonnaies)", expanded=False):
+        if df_cryptos.empty:
+            st.info("Aucune cession de cryptomonnaie détectée pour cette année.")
         else:
-            for actif in sorted(df_cryptos["Actif"].unique().tolist()):
-                df_actif_c = df_cryptos[df_cryptos["Actif"]==actif]
-                st.markdown(f"#### 🪙 {actif} (Bilan : {format_smart(df_actif_c['PV Num'].sum(),'€',force_sign=True)})")
-                for _,row_c in df_actif_c.iterrows():
-                    st.markdown(f"**Vente du {row_c['Date de vente']}**")
-                    st.markdown(f"- **213** : `{format_smart(row_c['Ligne 213'],'€')}`")
-                    st.markdown(f"- **220** : `{format_smart(row_c['Ligne 220'],'€')}`")
-                    st.markdown(f"- **224** : `{format_smart(row_c['Ligne 224'],'€',force_sign=True)}`")
+            st.markdown("### 🔹 Détail des cessions (Transaction par Transaction)")
+            actifs_cryptos = sorted(df_cryptos["Actif"].unique().tolist())
+            for actif in actifs_cryptos:
+                df_actif_c = df_cryptos[df_cryptos["Actif"] == actif]
+                st.markdown(f"#### 🪙 {actif} (Bilan : {format_smart(df_actif_c['PV Num'].sum(), '€', force_sign=True)})")
+                for _, row_c in df_actif_c.iterrows():
+                    st.markdown(f"**Vente du {row_c['Date de vente']} ({row_c['Quantité vendue']} {actif})**")
+                    st.markdown(f"- **211 Date de la cession :** `{row_c['Ligne 211']}`")
+                    st.markdown(f"- **212 Valeur globale du portefeuille :** `{format_smart(row_c['Ligne 212'], '€')}`")
+                    st.markdown(f"- **213 Prix de cession :** `{format_smart(row_c['Ligne 213'], '€')}`")
+                    st.markdown(f"- **214 Frais de cession :** `0 €` *(Inclus dans le net)*")
+                    st.markdown(f"- **215 Prix de cession net des frais :** `{format_smart(row_c['Ligne 213'], '€')}`")
+                    st.markdown(f"- **216 Soulte reçue ou versée :** `0 €`")
+                    st.markdown(f"- **217 Prix de cession net des soultes :** `{format_smart(row_c['Ligne 213'], '€')}`")
+                    st.markdown(f"- **218 Prix de cession net des frais et soultes :** `{format_smart(row_c['Ligne 213'], '€')}`")
+                    st.markdown(f"- **220 Prix total d'acquisition :** `{format_smart(row_c['Ligne 220'], '€')}`")
+                    st.markdown(f"- **221 Fractions de capital initial déduites :** `{format_smart(row_c['Ligne 221'], '€')}`")
+                    st.markdown(f"- **222 Soultes reçues en cas d'échanges antérieurs :** `0 €`")
+                    st.markdown(f"- **223 Prix total d'acquisition net :** `{format_smart(row_c['Ligne 223'], '€')}`")
+                    st.markdown(f"- **224 Plus-value ou moins-value globale :** `{format_smart(row_c['Ligne 224'], '€', force_sign=True)}`")
 
     st.divider()
     st.subheader("💡 3. Recommandation")
