@@ -1085,24 +1085,39 @@ elif page_choisie == "🏛️ Fiscalité":
         if interets_net_val>0: st.markdown(f"- **2TR** : `{format_smart(interets_net_val,'€')}`")
         else: st.markdown("- Aucun.")
 
-    with st.expander("📁 Formulaire 2074 (Plus-values Classiques)",expanded=False):
-        if df_actions.empty: st.info("Aucune cession.")
+    with st.expander("📁 Formulaire 2074 (Plus-values Classiques)", expanded=False):
+        if df_actions.empty:
+            st.info("Aucune cession d'actions/ETF détectée pour cette année.")
         else:
-            st.markdown("### Synthèse")
-            if plus_values_actions>0: st.markdown(f"- **Ligne 905** : `{format_smart(plus_values_actions,'€')}`")
-            if moins_values_actions>0: st.markdown(f"- **Ligne 913** : `{format_smart(moins_values_actions,'€')}`")
-            st.divider(); st.markdown("### Cadre 3 : Cessions")
-            for actif in sorted(df_actions["Actif"].unique().tolist()):
-                df_actif_a = df_actions[df_actions["Actif"]==actif]
-                qte_totale = df_actif_a["Qte Num"].sum(); cession_totale = df_actif_a["Cession Num"].sum()
-                acq_totale = df_actif_a["Acq Num"].sum(); pv_totale = df_actif_a["PV Num"].sum()
-                st.markdown(f"**👉 {actif}**")
-                st.markdown(f"- **514** : `{format_smart(cession_totale/qte_totale if qte_totale>0 else 0,'€',is_price=True)}`")
-                st.markdown(f"- **515** : `{format_smart(qte_totale,is_price=True)}`")
-                st.markdown(f"- **516** : `{format_smart(cession_totale,'€')}`")
-                st.markdown(f"- **520** : `{format_smart(acq_totale/qte_totale if qte_totale>0 else 0,'€',is_price=True)}`")
-                st.markdown(f"- **521** : `{format_smart(acq_totale,'€')}`")
-                st.info(f"**Bilan :** {format_smart(pv_totale,'€',force_sign=True)}")
+            st.markdown("### 🔹 Synthèse du Formulaire 2074")
+            if plus_values_actions > 0:
+                st.markdown(f"- **Ligne 905 :** `{format_smart(plus_values_actions, '€')}`")
+            if moins_values_actions > 0:
+                st.markdown(f"- **Ligne 913 :** `{format_smart(moins_values_actions, '€')}`")
+            st.divider()
+            st.markdown("### 🔹 Cadre 3 : Cessions de valeurs mobilières")
+            actifs_actions = sorted(df_actions["Actif"].unique().tolist())
+
+            for actif in actifs_actions:
+                df_actif_a = df_actions[df_actions["Actif"] == actif]
+                qte_totale = df_actif_a["Qte Num"].sum()
+                cession_totale = df_actif_a["Cession Num"].sum()
+                acq_totale = df_actif_a["Acq Num"].sum()
+                pv_totale = df_actif_a["PV Num"].sum()
+                valeur_unitaire_cession = cession_totale / qte_totale if qte_totale > 0 else 0.0
+                valeur_unitaire_acq = acq_totale / qte_totale if qte_totale > 0 else 0.0
+
+                st.markdown(f"**👉 Déclaration Globale pour {actif}**")
+                st.markdown(f"- **511 - Désignation :** `{actif} (Global Annuel) - Swissquote Bank SA`")
+                st.markdown(f"- **512 - Date de la cession :** `31/12/{annee_fiscale}`")
+                st.markdown(f"- **514 - Valeur unitaire de cession :** `{format_smart(valeur_unitaire_cession, '€', is_price=True)}`")
+                st.markdown(f"- **515 - Nombre de titres cédés :** `{format_smart(qte_totale, is_price=True)}`")
+                st.markdown(f"- **516 ou 513 - Prix de cession global :** `{format_smart(cession_totale, '€')}`")
+                st.markdown(f"- **517 - Frais de cession :** `0 €` *(Déjà déduits)*")
+                st.markdown(f"- **520 - Prix d'acquisition unitaire :** `{format_smart(valeur_unitaire_acq, '€', is_price=True)}`")
+                st.markdown(f"- **521 ou 519 - Prix d'acquisition global :** `{format_smart(acq_totale, '€')}`")
+                st.markdown(f"- **522 - Frais d'acquisition :** `0 €` *(Déjà inclus dans le PRU)*")
+                st.info(f"**Bilan pour {actif} :** {format_smart(pv_totale, '€', force_sign=True)}")
 
     with st.expander("📁 Formulaire 2086 (Cryptomonnaies)", expanded=False):
         if df_cryptos.empty:
