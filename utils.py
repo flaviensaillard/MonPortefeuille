@@ -3,34 +3,50 @@ import numpy as np
 import re
 
 def format_smart(val, symbol="", force_sign=False, is_price=False):
-    if pd.isna(val) or str(val).strip() == "": return ""
+    if pd.isna(val) or str(val).strip() == "":
+        return ""
     try:
         v = float(val)
-        # Correction : on force 2 décimales si c'est un pourcentage
+        # Pourcentage : toujours 2 décimales
         if symbol == "%":
             dec = 2
         else:
-            dec = 6 if is_price or (abs(v) > 0 and abs(v) < 1) else 2
-            
+            dec = 6  # on part toujours sur 6 décimales maxi
+
         s = f"{v:+,.{dec}f}" if force_sign else f"{v:,.{dec}f}"
         parts = s.split('.')
         int_part = parts[0].replace(',', ' ')
         if len(parts) > 1:
             frac_part = parts[1]
-            if dec > 2: frac_part = frac_part.rstrip('0')
-            if len(frac_part) == 0: frac_part = "00"
-            elif len(frac_part) == 1: frac_part += "0"
+            # Supprime les zéros à droite SAUF pour les pourcentages
+            if symbol != "%":
+                frac_part = frac_part.rstrip('0')
+                # Si après suppression il ne reste rien, on remet "00"
+                if len(frac_part) == 0:
+                    frac_part = "00"
+                # Si une seule décimale, on complète à 2
+                elif len(frac_part) == 1:
+                    frac_part += "0"
             num_str = f"{int_part}.{frac_part}"
         else:
             num_str = f"{int_part}.00"
-        if num_str in ['+.00', '-.00', '+0.00', '-0.00', '.00']: num_str = "0.00"
-        
-        if symbol == "$": return f"$ {num_str}"
-        elif symbol == "€": return f"{num_str} €"
-        elif symbol == "%": return f"{num_str} %"
-        elif symbol == "oz": return f"{num_str} oz"
-        else: return num_str
-    except: return str(val)
+
+        # Supprime le +0.00 inutile
+        if num_str in ['+.00', '-.00', '+0.00', '-0.00', '.00']:
+            num_str = "0.00"
+
+        if symbol == "$":
+            return f"$ {num_str}"
+        elif symbol == "€":
+            return f"{num_str} €"
+        elif symbol == "%":
+            return f"{num_str} %"
+        elif symbol == "oz":
+            return f"{num_str} oz"
+        else:
+            return num_str
+    except:
+        return str(val)
 
 def extraire_nombre(valeur):
     if pd.isna(valeur) or str(valeur).strip() == "" or str(valeur).lower() == "nan": return 0.0
