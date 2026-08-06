@@ -782,7 +782,7 @@ elif page_choisie == "📈 Performance":
         df_sorted = df_display.sort_values(by='Année',ascending=False).reset_index(drop=True)
         for c in ["Performance brute (%)","Inflation (%)","Performance nette (%)"]: df_sorted[c] = df_sorted[c].apply(lambda x: format_smart(x,"%"))
         for c in ["Gains Nets ($)","Valeur Bilan ($)"]: df_sorted[c] = df_sorted[c].apply(lambda x: format_smart(x,"$"))
-        df_sorted["Valeur Bilan (Or)"] = df_sorted["Valeur Bilan (Or)"].apply(lambda x: format_smart(x,"oz"))
+        df_sorted["Valeur Bilan (Or)"] = df_sorted["Valeur Bilan (Or)"].apply(lambda x: format_smart(x, "oz", high_precision=True))
         st.dataframe(df_sorted,column_config={c:st.column_config.TextColumn(c+" 🔒") for c in df_sorted.columns},hide_index=True,use_container_width=True)
         st.divider(); st.subheader("📊 Comparaison Brute vs Nette")
         df_chart = df_sorted.sort_values(by='Année',ascending=True)[['Année','Performance brute (%)','Performance nette (%)']].copy()
