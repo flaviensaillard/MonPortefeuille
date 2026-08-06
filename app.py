@@ -795,11 +795,11 @@ elif page_choisie == "🌴 Retraite":
         taxe_plus_value = st.number_input("Flat Tax (%) ✍️",min_value=0.00,max_value=60.00,step=0.10,value=float(st.session_state.config.get("retraite_taxe",float(st.session_state.config.get("tax_pfu",30.0)))),key="in_tax",on_change=on_retraite_params_change)
     st.divider()
 
-    # --- SIMULATION CORRIGÉE ---
+    # --- SIMULATION ---
     cap_v_a = cap_v_b = capital_initial
     inf_rate_a = inflation_a/100.0
     inf_rate_b = inflation_estimee/100.0
-    inf_rate_apports = inflation_estimee/100.0  # Même inflation pour les apports
+    inf_rate_apports = inflation_estimee/100.0
     r_a = rendement_a/100.0
     r_b = rendement_b/100.0
     r_a_m = (1+r_a)**(1/12)-1
@@ -833,52 +833,59 @@ elif page_choisie == "🌴 Retraite":
     cap_b_nom = cap_v_b
     total_apports = total_apports_passes+total_apports_futurs
 
-    tx_r_a = max(0.0,((1.08)/(1+inf_rate_a))-1)
-    tx_r_b = max(0.0,((1.08)/(1+inf_rate_b))-1)
+    # Capital net (pouvoir d'achat d'aujourd'hui)
+    cap_net_a = cap_a_nom / ((1+inf_rate_a)**years_diff)
+    cap_net_b = cap_b_nom / ((1+inf_rate_b)**years_diff)
+
+    # Taux de rente réelle
+    tx_r_a = max(0.0, ((1.08)/(1+inf_rate_a))-1)
+    tx_r_b = max(0.0, ((1.08)/(1+inf_rate_b))-1)
+
+    # Rentes basées sur le capital NET (pouvoir d'achat d'aujourd'hui)
+    rente_br_a = cap_net_a * tx_r_a / 12
+    rente_br_b = cap_net_b * tx_r_b / 12
+
+    # Parts de plus-value
+    total_a = cap_v_a
+    total_b = cap_v_b
+    plus_value_a = max(0, total_a - total_apports)
+    plus_value_b = max(0, total_b - total_apports)
+    part_plus_value_a = (plus_value_a/total_a*100) if total_a>0 else 0
+    part_plus_value_b = (plus_value_b/total_b*100) if total_b>0 else 0
+
+    # Impôts et rentes nettes
+    impot_a = rente_br_a * (part_plus_value_a/100) * (taxe_plus_value/100)
+    impot_b = rente_br_b * (part_plus_value_b/100) * (taxe_plus_value/100)
+    rente_nette_a = rente_br_a - impot_a
+    rente_nette_b = rente_br_b - impot_b
 
     st.subheader(f"🎯 Capital projeté au 1er Janvier {annee_retraite}"); colA,colB = st.columns(2)
 
-    # --- SCÉNARIO A ---
-    total_a = cap_v_a
-    plus_value_a = max(0,total_a-total_apports)
-    part_plus_value_a = (plus_value_a/total_a*100) if total_a>0 else 0
-    rente_br_a = (cap_a_nom/((1+inf_rate_a)**years_diff))*tx_r_a/12
-    impot_a = rente_br_a*(part_plus_value_a/100)*(taxe_plus_value/100)
-    rente_nette_a = rente_br_a-impot_a
-    
     with colA:
         st.markdown(f"### Scénario A ({format_smart(rendement_a,'%')}/an, infl. {format_smart(inflation_a,'%')})")
-        afficher_montant_double("💰 Capital Brut Final",cap_a_nom)
-        afficher_montant_double("🛒 Capital Net (pouvoir d'achat)",cap_a_nom/((1+inf_rate_a)**years_diff))
+        afficher_montant_double("💰 Capital Brut Final (dollars futurs)", cap_a_nom)
+        afficher_montant_double("🛒 Capital Net (pouvoir d'achat actuel)", cap_net_a)
         st.write("")
-        afficher_montant_double("📥 Total Apports",total_apports,couleur_valeur="#95a5a6")
-        afficher_montant_double("📈 Plus-Value",plus_value_a,couleur_valeur="#2ecc71")
-        st.metric("📊 Part Plus-Value",f"{format_smart(part_plus_value_a,'%')}")
+        afficher_montant_double("📥 Total Apports", total_apports, couleur_valeur="#95a5a6")
+        afficher_montant_double("📈 Plus-Value", plus_value_a, couleur_valeur="#2ecc71")
+        st.metric("📊 Part Plus-Value", f"{format_smart(part_plus_value_a,'%')}")
         st.write("")
-        afficher_montant_double("💰 Rente Brute Mensuelle",rente_br_a,couleur_valeur="#f39c12")
-        afficher_montant_double(f"💸 Impôt ({format_smart(taxe_plus_value,'%')} sur PV)",impot_a,couleur_valeur="#e74c3c",taille="medium")
-        afficher_montant_double("🟢 Rente Nette Mensuelle",rente_nette_a,couleur_valeur="#2ecc71")
+        afficher_montant_double("💰 Rente Brute Mensuelle (pouvoir d'achat actuel)", rente_br_a, couleur_valeur="#f39c12")
+        afficher_montant_double(f"💸 Impôt ({format_smart(taxe_plus_value,'%')} sur PV)", impot_a, couleur_valeur="#e74c3c", taille="medium")
+        afficher_montant_double("🟢 Rente Nette Mensuelle (pouvoir d'achat actuel)", rente_nette_a, couleur_valeur="#2ecc71")
 
-    # --- SCÉNARIO B ---
-    total_b = cap_v_b
-    plus_value_b = max(0,total_b-total_apports)
-    part_plus_value_b = (plus_value_b/total_b*100) if total_b>0 else 0
-    rente_br_b = (cap_b_nom/((1+inf_rate_b)**years_diff))*tx_r_b/12
-    impot_b = rente_br_b*(part_plus_value_b/100)*(taxe_plus_value/100)
-    rente_nette_b = rente_br_b-impot_b
-    
     with colB:
         st.markdown(f"### Scénario B ({format_smart(rendement_b,'%')}/an, infl. {format_smart(inflation_estimee,'%')})")
-        afficher_montant_double("💰 Capital Brut Final",cap_b_nom)
-        afficher_montant_double("🛒 Capital Net (pouvoir d'achat)",cap_b_nom/((1+inf_rate_b)**years_diff))
+        afficher_montant_double("💰 Capital Brut Final (dollars futurs)", cap_b_nom)
+        afficher_montant_double("🛒 Capital Net (pouvoir d'achat actuel)", cap_net_b)
         st.write("")
-        afficher_montant_double("📥 Total Apports",total_apports,couleur_valeur="#95a5a6")
-        afficher_montant_double("📈 Plus-Value",plus_value_b,couleur_valeur="#3498db")
-        st.metric("📊 Part Plus-Value",f"{format_smart(part_plus_value_b,'%')}")
+        afficher_montant_double("📥 Total Apports", total_apports, couleur_valeur="#95a5a6")
+        afficher_montant_double("📈 Plus-Value", plus_value_b, couleur_valeur="#3498db")
+        st.metric("📊 Part Plus-Value", f"{format_smart(part_plus_value_b,'%')}")
         st.write("")
-        afficher_montant_double("💰 Rente Brute Mensuelle",rente_br_b,couleur_valeur="#f39c12")
-        afficher_montant_double(f"💸 Impôt ({format_smart(taxe_plus_value,'%')} sur PV)",impot_b,couleur_valeur="#e74c3c",taille="medium")
-        afficher_montant_double("🟢 Rente Nette Mensuelle",rente_nette_b,couleur_valeur="#3498db")
+        afficher_montant_double("💰 Rente Brute Mensuelle (pouvoir d'achat actuel)", rente_br_b, couleur_valeur="#f39c12")
+        afficher_montant_double(f"💸 Impôt ({format_smart(taxe_plus_value,'%')} sur PV)", impot_b, couleur_valeur="#e74c3c", taille="medium")
+        afficher_montant_double("🟢 Rente Nette Mensuelle (pouvoir d'achat actuel)", rente_nette_b, couleur_valeur="#3498db")
 
     if trajectory_data:
         st.divider(); st.subheader("📈 Évolution du Pouvoir d'Achat")
