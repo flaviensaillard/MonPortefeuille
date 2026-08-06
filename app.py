@@ -929,145 +929,251 @@ elif page_choisie == "🏛️ Fiscalité":
     st.title("🏛️ Simulateur Fiscal")
     with st.spinner("Analyse des transactions..."):
         df_t = st.session_state.transactions.copy()
-        if 'Date_DT' not in df_t.columns: df_t['Date_DT'] = pd.to_datetime(df_t.get('Date'),dayfirst=True,errors='coerce')
-        annee_en_cours_sys = datetime.datetime.now().year; annee_defaut_sys = annee_en_cours_sys-1
-        annees_dispos = sorted(df_t['Date_DT'].dropna().dt.year.unique().tolist(),reverse=True) if not df_t.empty else []
-        if annee_defaut_sys not in annees_dispos: annees_dispos.append(annee_defaut_sys)
-        annees_dispos = sorted(list(set(annees_dispos)),reverse=True)
-        idx_defaut = annees_dispos.index(annee_defaut_sys)
+        if 'Date_DT' not in df_t.columns:
+            df_t['Date_DT'] = pd.to_datetime(df_t.get('Date'), dayfirst=True, errors='coerce')
+        annee_en_cours_sys = datetime.datetime.now().year
+        annee_defaut_sys = annee_en_cours_sys - 1
+        annees_dispos = sorted(df_t['Date_DT'].dropna().dt.year.unique().tolist(), reverse=True) if not df_t.empty else []
+        if annee_defaut_sys not in annees_dispos:
+            annees_dispos.append(annee_defaut_sys)
+        annees_dispos = sorted(list(set(annees_dispos)), reverse=True)
+        idx_defaut = annees_dispos.index(annee_defaut_sys) if annees_dispos else 0
+
         def on_year_change():
             y = st.session_state.annee_fiscale_select
-            bars,_,_ = get_fiscal_bars_for_year(y)
-            for k,v in bars.items():
-                if not k.startswith('_'): st.session_state.config[k] = v
-                if f"in_{k}" in st.session_state: st.session_state[f"in_{k}"] = v
-        annee_fiscale = st.selectbox("📅 Année des revenus :",annees_dispos,index=idx_defaut,key="annee_fiscale_select",on_change=on_year_change)
-        
-        bars,source,fiabilite = get_fiscal_bars_for_year(annee_fiscale)
-        if fiabilite=="Officielle": emoji,border_color,message = "🟢","#28a745","Données fiscales officielles - Calcul fiable à 100%"
-        elif fiabilite in ["Exacte (vérifiée)","Élevée"]: emoji,border_color,message = "🟢","#28a745","Barèmes vérifiés - Calcul fiable"
-        elif fiabilite in ["Approximative","Moyenne"]: emoji,border_color,message = "🟡","#ffc107","Barèmes estimés (basés sur l'inflation) - Calcul approximatif"
-        else: emoji,border_color,message = "🔴","#dc3545","Barèmes potentiellement obsolètes - Calcul non fiable"
+            bars, _, _ = get_fiscal_bars_for_year(y)
+            for k, v in bars.items():
+                if not k.startswith('_'):
+                    st.session_state.config[k] = v
+                    if f"in_{k}" in st.session_state:
+                        st.session_state[f"in_{k}"] = v
+
+        annee_fiscale = st.selectbox("📅 Année des revenus :", annees_dispos, index=idx_defaut, key="annee_fiscale_select", on_change=on_year_change)
+
+        # --- BANNIÈRE D'INFORMATION SUR LA SOURCE DES BARÈMES ---
+        bars, source, fiabilite = get_fiscal_bars_for_year(annee_fiscale)
+        if fiabilite == "Officielle":
+            emoji, border_color, message = "🟢", "#28a745", "Données fiscales officielles - Calcul fiable à 100%"
+        elif fiabilite in ["Exacte (vérifiée)", "Élevée"]:
+            emoji, border_color, message = "🟢", "#28a745", "Barèmes vérifiés - Calcul fiable"
+        elif fiabilite in ["Approximative", "Moyenne"]:
+            emoji, border_color, message = "🟡", "#ffc107", "Barèmes estimés (basés sur l'inflation) - Calcul approximatif"
+        else:
+            emoji, border_color, message = "🔴", "#dc3545", "Barèmes potentiellement obsolètes - Calcul non fiable"
+
         st.markdown(f"""
         <div style="background-color:#1e1e1e;color:#ffffff;border-radius:10px;padding:12px 16px;margin-bottom:15px;border-left:5px solid {border_color};font-size:0.95rem;">
             <strong>{emoji} Barèmes fiscaux {annee_fiscale}</strong><br>
             <span style="font-size:0.85rem;opacity:0.85;">Source : {source}</span><br>
             <span style="font-size:0.85rem;opacity:0.85;">{message}</span>
         </div>
-        """,unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
         st.divider()
 
-        df_actions = pd.DataFrame(get_action_tax_data(df_t,annee_fiscale))
-        df_cryptos = pd.DataFrame(get_crypto_tax_data(df_t,annee_fiscale))
+        # Données fiscales calculées
+        df_actions = pd.DataFrame(get_action_tax_data(df_t, annee_fiscale))
+        df_cryptos = pd.DataFrame(get_crypto_tax_data(df_t, annee_fiscale))
+
         if not df_actions.empty:
             df_a_net_per_asset = df_actions.groupby("Actif")["PV Num"].sum().reset_index()
-            plus_values_actions = df_a_net_per_asset[df_a_net_per_asset["PV Num"]>0]["PV Num"].sum()
-            moins_values_actions = abs(df_a_net_per_asset[df_a_net_per_asset["PV Num"]<0]["PV Num"].sum())
-        else: plus_values_actions=0.0; moins_values_actions=0.0; df_a_net_per_asset=pd.DataFrame()
-        plus_values_crypto = df_cryptos[df_cryptos["PV Num"]>0]["PV Num"].sum() if not df_cryptos.empty else 0.0
-        moins_values_crypto = abs(df_cryptos[df_cryptos["PV Num"]<0]["PV Num"].sum()) if not df_cryptos.empty else 0.0
-        bilan_net_actions = plus_values_actions-moins_values_actions
-        bilan_net_crypto = plus_values_crypto-moins_values_crypto
+            plus_values_actions = df_a_net_per_asset[df_a_net_per_asset["PV Num"] > 0]["PV Num"].sum()
+            moins_values_actions = abs(df_a_net_per_asset[df_a_net_per_asset["PV Num"] < 0]["PV Num"].sum())
+        else:
+            plus_values_actions = 0.0
+            moins_values_actions = 0.0
+            df_a_net_per_asset = pd.DataFrame()
+
+        plus_values_crypto = df_cryptos[df_cryptos["PV Num"] > 0]["PV Num"].sum() if not df_cryptos.empty else 0.0
+        moins_values_crypto = abs(df_cryptos[df_cryptos["PV Num"] < 0]["PV Num"].sum()) if not df_cryptos.empty else 0.0
+        bilan_net_actions = plus_values_actions - moins_values_actions
+        bilan_net_crypto = plus_values_crypto - moins_values_crypto
 
     def update_fiscal_config():
         key_mapping = {
-            "in_statut":"f_statut","in_enf":"f_enf","in_s1":"f_s1","in_s2":"f_s2",
-            "in_u1":"f_u1","in_k1":"f_k1","in_cv1":"f_cv1","in_r1":"f_r1",
-            "in_u2":"f_u2","in_k2":"f_k2","in_cv2":"f_cv2","in_r2":"f_r2",
-            "in_int_net":"f_int_net","in_pays_etr":"f_pays_etr",
-            "in_tax_lim_1":"tax_lim_1","in_tax_lim_2":"tax_lim_2","in_tax_lim_3":"tax_lim_3","in_tax_lim_4":"tax_lim_4",
-            "in_tax_rate_2":"tax_rate_2","in_tax_rate_3":"tax_rate_3","in_tax_rate_4":"tax_rate_4","in_tax_rate_5":"tax_rate_5",
-            "in_decote_lim_cel":"decote_lim_cel","in_decote_base_cel":"decote_base_cel",
-            "in_decote_lim_mar":"decote_lim_mar","in_decote_base_mar":"decote_base_mar",
-            "in_tax_pfu":"tax_pfu","in_tax_ps":"tax_ps","in_frais_repas":"frais_repas"
+            "in_statut": "f_statut", "in_enf": "f_enf", "in_s1": "f_s1", "in_s2": "f_s2",
+            "in_u1": "f_u1", "in_k1": "f_k1", "in_cv1": "f_cv1", "in_r1": "f_r1",
+            "in_u2": "f_u2", "in_k2": "f_k2", "in_cv2": "f_cv2", "in_r2": "f_r2",
+            "in_int_net": "f_int_net", "in_pays_etr": "f_pays_etr",
+            "in_parts": "f_parts",
+            "in_tax_lim_1": "tax_lim_1", "in_tax_lim_2": "tax_lim_2", "in_tax_lim_3": "tax_lim_3", "in_tax_lim_4": "tax_lim_4",
+            "in_tax_rate_2": "tax_rate_2", "in_tax_rate_3": "tax_rate_3", "in_tax_rate_4": "tax_rate_4", "in_tax_rate_5": "tax_rate_5",
+            "in_decote_lim_cel": "decote_lim_cel", "in_decote_base_cel": "decote_base_cel",
+            "in_decote_lim_mar": "decote_lim_mar", "in_decote_base_mar": "decote_base_mar",
+            "in_tax_pfu": "tax_pfu", "in_tax_ps": "tax_ps", "in_frais_repas": "frais_repas"
         }
-        for in_key,out_key in key_mapping.items():
-            if in_key in st.session_state: st.session_state.config[out_key] = st.session_state[in_key]
-        try: save_sheet("Config",pd.DataFrame(list(st.session_state.config.items()),columns=["Clé","Valeur"]))
-        except: pass
+        for in_key, out_key in key_mapping.items():
+            if in_key in st.session_state:
+                st.session_state.config[out_key] = st.session_state[in_key]
+        try:
+            save_sheet("Config", pd.DataFrame(list(st.session_state.config.items()), columns=["Clé", "Valeur"]))
+        except:
+            pass
 
     st.subheader("👤 1. Situation Familiale")
-    c_sit1,c_sit2 = st.columns(2)
-    with c_sit1: statut = st.radio("Situation matrimoniale ✍️",["Célibataire / Divorcé(e) / Veuf(ve)","Marié(e) / Pacsé(e)"],index=0 if st.session_state.config.get("f_statut")=="Célibataire / Divorcé(e) / Veuf(ve)" else 1,key="in_statut",on_change=update_fiscal_config)
-    with c_sit2: enfants = st.number_input("Enfants à charge ✍️",min_value=0,max_value=10,value=int(st.session_state.config.get("f_enf",0)),step=1,key="in_enf",on_change=update_fiscal_config)
+    c_sit1, c_sit2 = st.columns(2)
+    with c_sit1:
+        statut = st.radio("Situation matrimoniale ✍️",
+                          ["Célibataire / Divorcé(e) / Veuf(ve)", "Marié(e) / Pacsé(e)"],
+                          index=0 if st.session_state.config.get("f_statut") == "Célibataire / Divorcé(e) / Veuf(ve)" else 1,
+                          key="in_statut", on_change=update_fiscal_config)
+    with c_sit2:
+        enfants = st.number_input("Enfants à charge ✍️", min_value=0, max_value=10,
+                                  value=int(st.session_state.config.get("f_enf", 0)), step=1,
+                                  key="in_enf", on_change=update_fiscal_config)
+
+    # Calcul du nombre de parts automatique
+    parts_auto = 1.0 if "Célibataire" in statut else 2.0
+    if enfants == 1:
+        parts_auto += 0.5
+    elif enfants == 2:
+        parts_auto += 1.0
+    elif enfants >= 3:
+        parts_auto += 1.0 + (enfants - 2)
+
+    # Champ manuel persistant pour ajuster le quotient familial
+    parts = st.number_input(
+        "Nombre de parts (Quotient familial) ✍️",
+        min_value=0.5,
+        max_value=10.0,
+        value=float(st.session_state.config.get("f_parts", parts_auto)),
+        step=0.5,
+        key="in_parts",
+        on_change=update_fiscal_config
+    )
+    if "f_parts" not in st.session_state.config or st.session_state.config["f_parts"] != parts:
+        st.session_state.config["f_parts"] = parts
+
     st.divider()
-    salaire_1_val = float(st.session_state.config.get("f_s1",30000.0))
-    salaire_2_val = float(st.session_state.config.get("f_s2",0.0)) if "Marié" in statut else 0.0
-    frais_reels_1_val = calcul_frais_km(int(st.session_state.config.get("f_k1",0)),int(st.session_state.config.get("f_cv1",5)))+(int(st.session_state.config.get("f_r1",0))*float(st.session_state.config.get("frais_repas",5.35))) if st.session_state.config.get("f_u1",False) else 0.0
-    frais_reels_2_val = calcul_frais_km(int(st.session_state.config.get("f_k2",0)),int(st.session_state.config.get("f_cv2",5)))+(int(st.session_state.config.get("f_r2",0))*float(st.session_state.config.get("frais_repas",5.35))) if st.session_state.config.get("f_u2",False) else 0.0
-    interets_net_val = float(st.session_state.config.get("f_int_net",0.0))
-    parts = 1.0 if "Célibataire" in statut else 2.0
-    if enfants==1: parts+=0.5
-    elif enfants==2: parts+=1.0
-    elif enfants>=3: parts+=1.0+(enfants-2)
-    revenu_base_net_global = (salaire_1_val-max(salaire_1_val*0.10,frais_reels_1_val))+(salaire_2_val-max(salaire_2_val*0.10,frais_reels_2_val))+interets_net_val
-    impot_salaires_seuls = calcul_impot_ir(revenu_base_net_global,parts,statut,apply_decote=True)
-    if (df_actions.empty and df_cryptos.empty) or (plus_values_actions==0 and moins_values_actions==0): choix="Aucun"; cout_pfu=cout_bareme=0.0
-    elif bilan_net_actions<=0: choix="Aucun (Bilan négatif)"; cout_pfu=cout_bareme=0.0
+
+    salaire_1_val = float(st.session_state.config.get("f_s1", 30000.0))
+    salaire_2_val = float(st.session_state.config.get("f_s2", 0.0)) if "Marié" in statut else 0.0
+    frais_reels_1_val = calcul_frais_km(int(st.session_state.config.get("f_k1", 0)),
+                                        int(st.session_state.config.get("f_cv1", 5))) + (
+                                            int(st.session_state.config.get("f_r1", 0)) * float(
+                                        st.session_state.config.get("frais_repas", 5.35))) if st.session_state.config.get(
+        "f_u1", False) else 0.0
+    frais_reels_2_val = calcul_frais_km(int(st.session_state.config.get("f_k2", 0)),
+                                        int(st.session_state.config.get("f_cv2", 5))) + (
+                                            int(st.session_state.config.get("f_r2", 0)) * float(
+                                        st.session_state.config.get("frais_repas", 5.35))) if st.session_state.config.get(
+        "f_u2", False) else 0.0
+    interets_net_val = float(st.session_state.config.get("f_int_net", 0.0))
+
+    revenu_base_net_global = (salaire_1_val - max(salaire_1_val * 0.10, frais_reels_1_val)) + (
+                salaire_2_val - max(salaire_2_val * 0.10, frais_reels_2_val)) + interets_net_val
+    impot_salaires_seuls = calcul_impot_ir(revenu_base_net_global, parts, statut, apply_decote=True)
+
+    # Choix PFU / Barème
+    if (df_actions.empty and df_cryptos.empty) or (plus_values_actions == 0 and moins_values_actions == 0):
+        choix = "Aucun"
+        cout_pfu = cout_bareme = 0.0
+    elif bilan_net_actions <= 0:
+        choix = "Aucun (Bilan négatif)"
+        cout_pfu = cout_bareme = 0.0
     else:
-        cout_pfu = bilan_net_actions*(float(st.session_state.config.get("tax_pfu",30.0))/100.0)
-        cout_bareme = (calcul_impot_ir(revenu_base_net_global+bilan_net_actions,parts,statut,apply_decote=True)-impot_salaires_seuls)+(bilan_net_actions*(float(st.session_state.config.get("tax_ps",17.2))/100.0))
-        choix = "Barème" if cout_bareme<cout_pfu else "PFU"
+        cout_pfu = bilan_net_actions * (float(st.session_state.config.get("tax_pfu", 30.0)) / 100.0)
+        cout_bareme = (calcul_impot_ir(revenu_base_net_global + bilan_net_actions, parts, statut, apply_decote=True) -
+                       impot_salaires_seuls) + (
+                                  bilan_net_actions * (float(st.session_state.config.get("tax_ps", 17.2)) / 100.0))
+        choix = "Barème" if cout_bareme < cout_pfu else "PFU"
 
     st.subheader(f"📝 2. Antisèche du Fisc (Revenus {annee_fiscale})")
-    exp_2042 = st.expander("📁 Formulaire 2042 (Déclaration Principale)",expanded=False)
+
+    exp_2042 = st.expander("📁 Formulaire 2042 (Déclaration Principale)", expanded=False)
     with exp_2042:
         st.markdown("### ⚙️ Paramètres Fiscaux & Revenus")
         if st.checkbox("Modifier les barèmes (Mode Avancé)"):
-            col_b1,col_b2,col_b3 = st.columns(3)
+            col_b1, col_b2, col_b3 = st.columns(3)
             with col_b1:
-                st.number_input("Plafond T1 (€)",value=float(st.session_state.config.get("tax_lim_1",11294.0)),key="in_tax_lim_1",on_change=update_fiscal_config)
-                st.number_input("Plafond T2 (€)",value=float(st.session_state.config.get("tax_lim_2",28797.0)),key="in_tax_lim_2",on_change=update_fiscal_config)
-                st.number_input("Plafond T3 (€)",value=float(st.session_state.config.get("tax_lim_3",82341.0)),key="in_tax_lim_3",on_change=update_fiscal_config)
-                st.number_input("Plafond T4 (€)",value=float(st.session_state.config.get("tax_lim_4",177106.0)),key="in_tax_lim_4",on_change=update_fiscal_config)
+                st.number_input("Plafond T1 (€)", value=float(st.session_state.config.get("tax_lim_1", 11294.0)),
+                                key="in_tax_lim_1", on_change=update_fiscal_config)
+                st.number_input("Plafond T2 (€)", value=float(st.session_state.config.get("tax_lim_2", 28797.0)),
+                                key="in_tax_lim_2", on_change=update_fiscal_config)
+                st.number_input("Plafond T3 (€)", value=float(st.session_state.config.get("tax_lim_3", 82341.0)),
+                                key="in_tax_lim_3", on_change=update_fiscal_config)
+                st.number_input("Plafond T4 (€)", value=float(st.session_state.config.get("tax_lim_4", 177106.0)),
+                                key="in_tax_lim_4", on_change=update_fiscal_config)
             with col_b2:
-                st.number_input("Taux T2",value=float(st.session_state.config.get("tax_rate_2",0.11)),step=0.01,key="in_tax_rate_2",on_change=update_fiscal_config)
-                st.number_input("Taux T3",value=float(st.session_state.config.get("tax_rate_3",0.30)),step=0.01,key="in_tax_rate_3",on_change=update_fiscal_config)
-                st.number_input("Taux T4",value=float(st.session_state.config.get("tax_rate_4",0.41)),step=0.01,key="in_tax_rate_4",on_change=update_fiscal_config)
-                st.number_input("Taux T5",value=float(st.session_state.config.get("tax_rate_5",0.45)),step=0.01,key="in_tax_rate_5",on_change=update_fiscal_config)
-                st.number_input("PFU (%)",value=float(st.session_state.config.get("tax_pfu",30.0)),step=0.1,key="in_tax_pfu",on_change=update_fiscal_config)
-                st.number_input("Repas URSSAF (€)",value=float(st.session_state.config.get("frais_repas",5.35)),step=0.01,key="in_frais_repas",on_change=update_fiscal_config)
+                st.number_input("Taux T2", value=float(st.session_state.config.get("tax_rate_2", 0.11)), step=0.01,
+                                key="in_tax_rate_2", on_change=update_fiscal_config)
+                st.number_input("Taux T3", value=float(st.session_state.config.get("tax_rate_3", 0.30)), step=0.01,
+                                key="in_tax_rate_3", on_change=update_fiscal_config)
+                st.number_input("Taux T4", value=float(st.session_state.config.get("tax_rate_4", 0.41)), step=0.01,
+                                key="in_tax_rate_4", on_change=update_fiscal_config)
+                st.number_input("Taux T5", value=float(st.session_state.config.get("tax_rate_5", 0.45)), step=0.01,
+                                key="in_tax_rate_5", on_change=update_fiscal_config)
+                st.number_input("PFU (%)", value=float(st.session_state.config.get("tax_pfu", 30.0)), step=0.1,
+                                key="in_tax_pfu", on_change=update_fiscal_config)
+                st.number_input("Repas URSSAF (€)", value=float(st.session_state.config.get("frais_repas", 5.35)),
+                                step=0.01, key="in_frais_repas", on_change=update_fiscal_config)
             with col_b3:
-                st.number_input("Décote Cél. (€)",value=float(st.session_state.config.get("decote_lim_cel",2002.0)),key="in_decote_lim_cel",on_change=update_fiscal_config)
-                st.number_input("Base Cél. (€)",value=float(st.session_state.config.get("decote_base_cel",906.0)),key="in_decote_base_cel",on_change=update_fiscal_config)
-                st.number_input("Décote Couple (€)",value=float(st.session_state.config.get("decote_lim_mar",3300.0)),key="in_decote_lim_mar",on_change=update_fiscal_config)
-                st.number_input("Base Couple (€)",value=float(st.session_state.config.get("decote_base_mar",1493.0)),key="in_decote_base_mar",on_change=update_fiscal_config)
+                st.number_input("Décote Cél. (€)", value=float(st.session_state.config.get("decote_lim_cel", 2002.0)),
+                                key="in_decote_lim_cel", on_change=update_fiscal_config)
+                st.number_input("Base Cél. (€)", value=float(st.session_state.config.get("decote_base_cel", 906.0)),
+                                key="in_decote_base_cel", on_change=update_fiscal_config)
+                st.number_input("Décote Couple (€)", value=float(st.session_state.config.get("decote_lim_mar", 3300.0)),
+                                key="in_decote_lim_mar", on_change=update_fiscal_config)
+                st.number_input("Base Couple (€)", value=float(st.session_state.config.get("decote_base_mar", 1493.0)),
+                                key="in_decote_base_mar", on_change=update_fiscal_config)
+
         st.markdown("### 🔹 Revenus nets (Salaires)")
-        c_sal1,c_sal2 = st.columns(2)
-        with c_sal1: st.number_input("Déclarant 1 (€) ✍️",min_value=0.0,value=float(st.session_state.config.get("f_s1",30000.0)),step=1000.0,key="in_s1",on_change=update_fiscal_config)
+        c_sal1, c_sal2 = st.columns(2)
+        with c_sal1:
+            st.number_input("Déclarant 1 (€) ✍️", min_value=0.0,
+                            value=float(st.session_state.config.get("f_s1", 30000.0)), step=1000.0,
+                            key="in_s1", on_change=update_fiscal_config)
         with c_sal2:
-            if "Marié" in statut: st.number_input("Déclarant 2 (€) ✍️",min_value=0.0,value=float(st.session_state.config.get("f_s2",0.0)),step=1000.0,key="in_s2",on_change=update_fiscal_config)
+            if "Marié" in statut:
+                st.number_input("Déclarant 2 (€) ✍️", min_value=0.0,
+                                value=float(st.session_state.config.get("f_s2", 0.0)), step=1000.0,
+                                key="in_s2", on_change=update_fiscal_config)
+
         st.markdown("### 🚗 Frais Professionnels")
-        col_f1,col_f2 = st.columns(2)
+        col_f1, col_f2 = st.columns(2)
         with col_f1:
-            use_frais_1 = st.checkbox("Frais réels (Vous)",value=bool(st.session_state.config.get("f_u1",False)),key="in_u1",on_change=update_fiscal_config)
+            use_frais_1 = st.checkbox("Frais réels (Vous)", value=bool(st.session_state.config.get("f_u1", False)),
+                                      key="in_u1", on_change=update_fiscal_config)
             if use_frais_1:
-                st.number_input("Km annuels - Vous ✍️",min_value=0,value=int(st.session_state.config.get("f_k1",0)),step=1000,key="in_k1",on_change=update_fiscal_config)
-                st.selectbox("CV - Vous ✍️",[3,4,5,6,7],index=[3,4,5,6,7].index(int(st.session_state.config.get("f_cv1",5))),key="in_cv1",on_change=update_fiscal_config)
-                st.number_input("Jours repas - Vous ✍️",min_value=0,value=int(st.session_state.config.get("f_r1",0)),step=10,key="in_r1",on_change=update_fiscal_config)
-                st.info(f"💰 Frais Réels (Vous) : **{format_smart(frais_reels_1_val,'€')}**")
+                st.number_input("Km annuels - Vous ✍️", min_value=0,
+                                value=int(st.session_state.config.get("f_k1", 0)), step=1000,
+                                key="in_k1", on_change=update_fiscal_config)
+                st.selectbox("CV - Vous ✍️", [3, 4, 5, 6, 7],
+                             index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv1", 5))),
+                             key="in_cv1", on_change=update_fiscal_config)
+                st.number_input("Jours repas - Vous ✍️", min_value=0,
+                                value=int(st.session_state.config.get("f_r1", 0)), step=10,
+                                key="in_r1", on_change=update_fiscal_config)
+                st.info(f"💰 Frais Réels (Vous) : **{format_smart(frais_reels_1_val, '€')}**")
         if "Marié" in statut:
             with col_f2:
-                use_frais_2 = st.checkbox("Frais réels (Conjoint)",value=bool(st.session_state.config.get("f_u2",False)),key="in_u2",on_change=update_fiscal_config)
+                use_frais_2 = st.checkbox("Frais réels (Conjoint)",
+                                          value=bool(st.session_state.config.get("f_u2", False)),
+                                          key="in_u2", on_change=update_fiscal_config)
                 if use_frais_2:
-                    st.number_input("Km annuels - Conjoint ✍️",min_value=0,value=int(st.session_state.config.get("f_k2",0)),step=1000,key="in_k2",on_change=update_fiscal_config)
-                    st.selectbox("CV - Conjoint ✍️",[3,4,5,6,7],index=[3,4,5,6,7].index(int(st.session_state.config.get("f_cv2",5))),key="in_cv2",on_change=update_fiscal_config)
-                    st.number_input("Jours repas - Conjoint ✍️",min_value=0,value=int(st.session_state.config.get("f_r2",0)),step=10,key="in_r2",on_change=update_fiscal_config)
-                    st.info(f"💰 Frais Réels (Conjoint) : **{format_smart(frais_reels_2_val,'€')}**")
+                    st.number_input("Km annuels - Conjoint ✍️", min_value=0,
+                                    value=int(st.session_state.config.get("f_k2", 0)), step=1000,
+                                    key="in_k2", on_change=update_fiscal_config)
+                    st.selectbox("CV - Conjoint ✍️", [3, 4, 5, 6, 7],
+                                 index=[3, 4, 5, 6, 7].index(int(st.session_state.config.get("f_cv2", 5))),
+                                 key="in_cv2", on_change=update_fiscal_config)
+                    st.number_input("Jours repas - Conjoint ✍️", min_value=0,
+                                    value=int(st.session_state.config.get("f_r2", 0)), step=10,
+                                    key="in_r2", on_change=update_fiscal_config)
+                    st.info(f"💰 Frais Réels (Conjoint) : **{format_smart(frais_reels_2_val, '€')}**")
+
         out_2042_lines = st.container()
 
     with st.expander("📁 Formulaire 2047 (Revenus mobiliers étrangers - ex: Revolut)", expanded=False):
         st.markdown("### 🔹 Rubrique 2 : Des revenus des valeurs et capitaux mobiliers imposables en France")
         c_rev1, c_rev2 = st.columns(2)
         with c_rev1:
-            pays_etranger = st.text_input("Pays d'origine (ex: Lituanie) ✍️", 
-                                          value=st.session_state.config.get("f_pays_etr", "Lituanie"), 
+            pays_etranger = st.text_input("Pays d'origine (ex: Lituanie) ✍️",
+                                          value=st.session_state.config.get("f_pays_etr", "Lituanie"),
                                           key="in_pays_etr", on_change=update_fiscal_config)
         with c_rev2:
-            interets_net = st.number_input("Montant Net encaissé (en €) ✍️", min_value=0.0, 
-                                          value=float(st.session_state.config.get("f_int_net", 0.0)), 
-                                          step=10.0, key="in_int_net", on_change=update_fiscal_config)
-        
+            interets_net = st.number_input("Montant Net encaissé (en €) ✍️", min_value=0.0,
+                                           value=float(st.session_state.config.get("f_int_net", 0.0)), step=10.0,
+                                           key="in_int_net", on_change=update_fiscal_config)
         if interets_net <= 0:
             st.info("Aucun revenu déclaré. Formulaire non requis.")
         else:
@@ -1078,23 +1184,34 @@ elif page_choisie == "🏛️ Fiscalité":
 
     with out_2042_lines:
         st.divider()
-        st.markdown("### 🔹 Lignes à reporter (2042)")
-        st.markdown("**Plus-Values :**")
-        if bilan_net_actions>0:
-            st.markdown(f"- **3VG** : `{format_smart(bilan_net_actions,'€')}`")
-            if choix=="Barème": st.markdown("- **2OP** : `À cocher`.")
-            else: st.markdown("- **2OP** : `DÉCOCHÉE`.")
-        elif bilan_net_actions<0: st.markdown(f"- **3VH** : `{format_smart(abs(bilan_net_actions),'€')}`")
-        else: st.markdown("- Aucune.")
-        st.markdown("**Cryptos :**")
-        if bilan_net_crypto>0: st.markdown(f"- **3AN** : `{format_smart(bilan_net_crypto,'€')}`")
-        elif bilan_net_crypto<0: st.markdown(f"- **3BN** : `{format_smart(abs(bilan_net_crypto),'€')}`")
-        else: st.markdown("- Aucune.")
-        st.markdown("**Intérêts :**")
-        if interets_net_val>0: st.markdown(f"- **2TR** : `{format_smart(interets_net_val,'€')}`")
-        else: st.markdown("- Aucun.")
+        st.markdown("### 🔹 Lignes à reporter sur la Déclaration 2042")
+        st.markdown("**Plus-Values (Rubrique 3) :**")
+        if bilan_net_actions > 0:
+            st.markdown(f"- **Case 3VG** : `{format_smart(bilan_net_actions, '€')}`")
+            if choix == "Barème":
+                st.markdown("- **Case 2OP** : `À cocher absolument`.")
+            else:
+                st.markdown("- **Case 2OP** : `À laisser DÉCOCHÉE`.")
+        elif bilan_net_actions < 0:
+            st.markdown(f"- **Case 3VH** : `{format_smart(abs(bilan_net_actions), '€')}`")
+        else:
+            st.markdown("- `Aucune plus-value boursière classique à reporter.`")
 
-    with st.expander("📁 Formulaire 2074 (Plus-values Classiques)", expanded=False):
+        st.markdown("**Cryptomonnaies (Rubrique 3) :**")
+        if bilan_net_crypto > 0:
+            st.markdown(f"- **Case 3AN** : `{format_smart(bilan_net_crypto, '€')}`")
+        elif bilan_net_crypto < 0:
+            st.markdown(f"- **Case 3BN** : `{format_smart(abs(bilan_net_crypto), '€')}`")
+        else:
+            st.markdown("- `Aucune plus-value crypto à reporter.`")
+
+        st.markdown("**Revenus Mobiliers (Rubrique 2) :**")
+        if interets_net_val > 0:
+            st.markdown(f"- **Case 2TR** : `{format_smart(interets_net_val, '€')}`")
+        else:
+            st.markdown("- `Aucun intérêt à reporter.`")
+
+    with st.expander("📁 Formulaire 2074 (Plus-values Classiques : Actions, ETF...)", expanded=False):
         if df_actions.empty:
             st.info("Aucune cession d'actions/ETF détectée pour cette année.")
         else:
@@ -1138,7 +1255,7 @@ elif page_choisie == "🏛️ Fiscalité":
                 st.success(f"**Diagnostic :** Vous êtes en gain net sur l'année, mais vous avez subi des pertes ({format_smart(moins_values_actions, '€')}) qu'il faut imputer sur vos gains.")
                 st.markdown("⚠️ **Laissez le Bloc 1132 TOTALEMENT VIDE.**")
                 st.markdown("👉 **Rendez-vous au Bloc 1133.**")
-                
+
                 mv_restante = moins_values_actions
                 lignes_cadre_11 = []
                 for _, row in df_a_net_per_asset[df_a_net_per_asset["PV Num"] > 0].iterrows():
@@ -1188,17 +1305,56 @@ elif page_choisie == "🏛️ Fiscalité":
                     st.markdown(f"- **223 Prix total d'acquisition net :** `{format_smart(row_c['Ligne 223'], '€')}`")
                     st.markdown(f"- **224 Plus-value ou moins-value globale :** `{format_smart(row_c['Ligne 224'], '€', force_sign=True)}`")
 
+    # --- 3. Recommandation et bilan fiscal ---
     st.divider()
     st.subheader("💡 3. Recommandation")
-    if bilan_net_actions>0:
-        taux_moyen_bareme = (cout_bareme/bilan_net_actions)*100
-        if choix=="Barème": st.success(f"✅ **Barème Progressif** plus avantageux : **{format_smart(cout_bareme,'€')}** (Taux effectif : {format_smart(taux_moyen_bareme,'%')})")
-        else: st.success(f"✅ **Flat Tax (PFU)** plus avantageuse : **{format_smart(cout_pfu,'€')}**")
-    taux_commun = (impot_salaires_seuls/(salaire_1_val+salaire_2_val+interets_net_val)*100) if (salaire_1_val+salaire_2_val+interets_net_val)>0 else 0.0
-    taux_perso_1 = (calcul_impot_ir((salaire_1_val-max(salaire_1_val*0.10,frais_reels_1_val)),1.0,"Célibataire",apply_decote=False)/salaire_1_val*100) if salaire_1_val>0 else 0.0
-    st.markdown("#### 📌 Bilan Impôts")
-    st.write(f"Impôt foyer : **{format_smart(impot_salaires_seuls,'€')} / an**.")
-    col_taux1,col_taux2 = st.columns(2)
-    with col_taux1: st.info(f"👨‍👩‍👧‍👦 **Taux Commun : {format_smart(taux_commun,'%')}**")
-    if "Marié" in statut: 
-        with col_taux2: st.success(f"👤 **Taux Personnalisé : {format_smart(taux_perso_1,'%')}**")
+    if bilan_net_actions > 0:
+        taux_moyen_bareme = (cout_bareme / bilan_net_actions) * 100
+        if choix == "Barème":
+            st.success(f"✅ **Le Barème Progressif est plus avantageux pour vos plus-values !**")
+            st.write(f"Avec le Barème : l'impôt est de **{format_smart(cout_bareme, '€')}** *(Taux effectif : {format_smart(taux_moyen_bareme, '%')} )*.")
+        else:
+            st.success(f"✅ **La Flat Tax (PFU) est plus avantageuse pour vos plus-values !**")
+            st.write(f"Avec la Flat Tax : l'impôt est plafonné à **{format_smart(cout_pfu, '€')}**.")
+
+    # --- Bilan fiscal complet ---
+    st.markdown("#### 📌 Bilan de votre impôt sur le revenu")
+    revenu_global = salaire_1_val + salaire_2_val + interets_net_val
+    if revenu_global > 0:
+        taux_moyen_foyer = (impot_salaires_seuls / revenu_global) * 100
+    else:
+        taux_moyen_foyer = 0.0
+
+    # Détermination du taux marginal (dernière tranche atteinte)
+    t1 = float(st.session_state.config.get("tax_lim_1", 11294))
+    t2 = float(st.session_state.config.get("tax_lim_2", 28797))
+    t3 = float(st.session_state.config.get("tax_lim_3", 82341))
+    t4 = float(st.session_state.config.get("tax_lim_4", 177106))
+    r2 = float(st.session_state.config.get("tax_rate_2", 0.11))
+    r3 = float(st.session_state.config.get("tax_rate_3", 0.30))
+    r4 = float(st.session_state.config.get("tax_rate_4", 0.41))
+    r5 = float(st.session_state.config.get("tax_rate_5", 0.45))
+    tranches = [
+        (0, t1, 0.0, "0%"),
+        (t1, t2, r2, f"{r2*100:.0f}%"),
+        (t2, t3, r3, f"{r3*100:.0f}%"),
+        (t3, t4, r4, f"{r4*100:.0f}%"),
+        (t4, float('inf'), r5, f"{r5*100:.0f}%")
+    ]
+    qf = revenu_base_net_global / parts
+    taux_marginal = "0%"
+    for _, _, _, label in tranches:
+        if qf > _:
+            taux_marginal = label
+
+    st.write(f"**Revenu net imposable du foyer :** {format_smart(revenu_base_net_global, '€')}")
+    st.write(f"**Nombre de parts :** {parts} ({statut}, {enfants} enfant(s))")
+    st.write(f"**Impôt sur le revenu (avant réductions) :** {format_smart(impot_salaires_seuls, '€')}")
+    st.metric("Taux moyen du foyer", f"{format_smart(taux_moyen_foyer, '%')}")
+    st.caption(f"Taux marginal d'imposition : {taux_marginal}")
+
+    # Taux de prélèvement à la source estimé
+    if revenu_global > 0:
+        st.info(f"👨‍👩‍👧‍👦 **Taux de prélèvement à la source estimé :** {format_smart(taux_moyen_foyer, '%')}")
+    else:
+        st.info("Aucun revenu saisi.")
