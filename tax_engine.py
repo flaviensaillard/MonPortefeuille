@@ -293,8 +293,7 @@ def get_crypto_tax_data(df_transactions, target_year):
                 results.append({
                     "Actif": t,
                     "Date de vente": row['Date'],
-                    st.write(f"DEBUG qte brute = {qte}")
-                    "Quantité vendue": format_smart(qte, is_price=True),
+                    "Quantité vendue": format_smart(qte, is_price=True, high_precision=True) if qte >= 0.000001 else f"{qte:.8f}",
                     "Ligne 211": row['Date'],
                     "Ligne 212": valeur_globale,
                     "Ligne 213": prix_cession_eur,
