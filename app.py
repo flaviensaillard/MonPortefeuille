@@ -1056,16 +1056,25 @@ elif page_choisie == "🏛️ Fiscalité":
                     st.info(f"💰 Frais Réels (Conjoint) : **{format_smart(frais_reels_2_val,'€')}**")
         out_2042_lines = st.container()
 
-    with st.expander("📁 Formulaire 2047 (Revenus étrangers)",expanded=False):
-        st.markdown("### 🔹 Rubrique 2")
-        c_rev1,c_rev2 = st.columns(2)
-        with c_rev1: pays_etranger = st.text_input("Pays ✍️",value=st.session_state.config.get("f_pays_etr","Lituanie"),key="in_pays_etr",on_change=update_fiscal_config)
-        with c_rev2: interets_net = st.number_input("Montant Net (€) ✍️",min_value=0.0,value=float(st.session_state.config.get("f_int_net",0.0)),step=10.0,key="in_int_net",on_change=update_fiscal_config)
-        if interets_net<=0: st.info("Aucun revenu déclaré.")
+    with st.expander("📁 Formulaire 2047 (Revenus mobiliers étrangers - ex: Revolut)", expanded=False):
+        st.markdown("### 🔹 Rubrique 2 : Des revenus des valeurs et capitaux mobiliers imposables en France")
+        c_rev1, c_rev2 = st.columns(2)
+        with c_rev1:
+            pays_etranger = st.text_input("Pays d'origine (ex: Lituanie) ✍️", 
+                                          value=st.session_state.config.get("f_pays_etr", "Lituanie"), 
+                                          key="in_pays_etr", on_change=update_fiscal_config)
+        with c_rev2:
+            interets_net = st.number_input("Montant Net encaissé (en €) ✍️", min_value=0.0, 
+                                          value=float(st.session_state.config.get("f_int_net", 0.0)), 
+                                          step=10.0, key="in_int_net", on_change=update_fiscal_config)
+        
+        if interets_net <= 0:
+            st.info("Aucun revenu déclaré. Formulaire non requis.")
         else:
-            st.markdown(f"- **Ligne 250** : Pays : `{pays_etranger}` | Montant : `{format_smart(interets_net,'€')}`")
-            st.markdown(f"- **Ligne 251** : `{format_smart(interets_net,'€')}`")
-            st.markdown(f"- **Ligne 252 (2TR)** : `{format_smart(interets_net,'€')}`")
+            st.markdown(f"- **Lignes 232 à 238 :** `Laissez totalement VIDE`")
+            st.markdown(f"- **Ligne 250 (Intérêts n'ouvrant pas droit à crédit d'impôt) :** Pays : `{pays_etranger}` | Montant : `{format_smart(interets_net, '€')}`")
+            st.markdown(f"- **Ligne 251 (Total) :** `{format_smart(interets_net, '€')}`")
+            st.markdown(f"- **Ligne 252 (Total 2TR) :** `{format_smart(interets_net, '€')}`")
 
     with out_2042_lines:
         st.divider()
