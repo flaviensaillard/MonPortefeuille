@@ -116,6 +116,7 @@ def _fetch_fiscal_bars(year):
 
 # --- FONCTIONS DE CALCUL PARTAGÉES ---
 def calculer_performances_annuelles():
+    """Calcule les performances annuelles avec moyenne géométrique (CAGR)."""
     if "perf_data" not in st.session_state:
         df_p = st.session_state.projections
         annee_en_cours = datetime.datetime.now().year
@@ -137,10 +138,12 @@ def calculer_performances_annuelles():
             perf_brutes.append(perf_annee)
         df_y = df_lasts.copy(); df_y['Année'] = df_y['Année'].astype(int)
         df_y['Performance brute (%)'] = perf_brutes
+        # Annualisation de la première année partielle
         jours_annee_1 = (df_viz[df_viz['Année']==df_viz['Date_DT'].min().year]['Date_DT'].max()-df_viz['Date_DT'].min()).days
         if jours_annee_1>0 and jours_annee_1<330 and not df_y[df_y['Année']==df_viz['Date_DT'].min().year].empty:
             p = df_y.loc[df_y['Année']==df_viz['Date_DT'].min().year,'Performance brute (%)'].values[0]
             df_y.loc[df_y['Année']==df_viz['Date_DT'].min().year,'Performance brute (%)'] = (((1+p/100)**(365.25/jours_annee_1))-1)*100
+        # Inflation
         df_inf = st.session_state.inflation.copy()
         if not df_inf.empty:
             df_inf['Année'] = df_inf['Année'].astype(int)
@@ -148,9 +151,34 @@ def calculer_performances_annuelles():
         else: df_y['Inflation (%)'] = 0.0
         df_y['Performance nette (%)'] = (((1+df_y['Performance brute (%)']/100)/(1+df_y['Inflation (%)']/100))-1)*100
         df_y['Gains Nets ($)'] = df_y['Evolution cumulée $'] - df_y['Evolution cumulée $'].shift(1).fillna(0)
+        
+        # --- MOYENNE GÉOMÉTRIQUE (CAGR) au lieu de la moyenne arithmétique ---
         df_hist = df_y[df_y['Année'] < annee_en_cours]
-        moyenne_brute = round(df_hist['Performance brute (%)'].mean(),2) if not df_hist.empty else 5.00
-        moyenne_inflation = round(df_hist['Inflation (%)'].mean(),2) if not df_hist.empty else 2.00
+        if not df_hist.empty and len(df_hist) > 0:
+            # CAGR = ((1+r1) × (1+r2) × ... × (1+rn))^(1/n) - 1
+            produit = 1.0
+            for perf in df_hist['Performance brute (%)']:
+                produit *= (1 + perf/100)
+            n = len(df_hist)
+            if produit > 0:
+                moyenne_brute = round((produit ** (1/n) - 1) * 100, 2)
+            else:
+                moyenne_brute = 5.00
+        else:
+            moyenne_brute = 5.00
+        
+        # Moyenne géométrique pour l'inflation aussi
+        if not df_hist.empty and len(df_hist) > 0:
+            produit_inf = 1.0
+            for inf in df_hist['Inflation (%)']:
+                produit_inf *= (1 + inf/100)
+            if produit_inf > 0:
+                moyenne_inflation = round((produit_inf ** (1/n) - 1) * 100, 2)
+            else:
+                moyenne_inflation = 2.00
+        else:
+            moyenne_inflation = 2.00
+        
         st.session_state.perf_data = {"df_y": df_y, "moyenne_brute": moyenne_brute, "moyenne_inflation": moyenne_inflation}
 
 def get_moyenne_performance_brute():
@@ -735,8 +763,8 @@ elif page_choisie == "📈 Performance":
         df_hist = df_y[df_y['Année']<datetime.datetime.now().year].copy()
         if not df_hist.empty:
             c_m1,c_m2,c_m3,c_m4 = st.columns(4)
-            c_m1.metric("Perf. Brute",format_smart(perf_data["moyenne_brute"],"%",force_sign=True))
-            c_m2.metric("Inflation",format_smart(perf_data["moyenne_inflation"],"%"))
+            c_m1.metric("Perf. Brute (CAGR)",format_smart(perf_data["moyenne_brute"],"%",force_sign=True))
+            c_m2.metric("Inflation (CAGR)",format_smart(perf_data["moyenne_inflation"],"%"))
             c_m3.metric("Perf. Nette",format_smart(df_hist['Performance nette (%)'].mean(),"%",force_sign=True))
             with c_m4: afficher_montant_double("Gains / An",df_hist['Gains Nets ($)'].mean(),taille="medium")
         else: st.info("Historique insuffisant.")
@@ -782,7 +810,7 @@ elif page_choisie == "🌴 Retraite":
         <div style="margin-bottom:0.8rem;">
             <div style="font-size:0.9rem;opacity:0.8;margin-bottom:0.2rem;">Scénario A (%) 🔒</div>
             <div style="font-size:1.4rem;font-weight:600;line-height:1.2;color:#2ecc71;">
-                {format_smart(moy_brute_hist,'%')} <span style="font-size:0.65em;opacity:0.7;font-weight:400;">(moy. historique)</span>
+                {format_smart(moy_brute_hist,'%')} <span style="font-size:0.65em;opacity:0.7;font-weight:400;">(CAGR historique)</span>
             </div>
             <div style="font-size:0.8rem;opacity:0.6;margin-top:0.2rem;">Inflation moy. : {format_smart(moy_inflation_hist,'%')} (auto)</div>
         </div>
@@ -841,8 +869,7 @@ elif page_choisie == "🌴 Retraite":
     r_reel_a = (1 + r_a) / (1 + inf_rate_a) - 1
     r_reel_b = (1 + r_b) / (1 + inf_rate_b) - 1
 
-    # Rente perpétuelle = Capital × Rendement réel
-    # On ne retire que les intérêts, le capital reste intact
+    # Rente perpétuelle = Capital × Rendement réel (intérêts seulement, capital intact)
     rente_br_a = cap_net_a * max(0, r_reel_a) / 12
     rente_br_b = cap_net_b * max(0, r_reel_b) / 12
 
