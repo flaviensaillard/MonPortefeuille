@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 # --- 1. CONFIGURATION ET CONSTANTES ---
 st.set_page_config(page_title="Mon Portefeuille", layout="wide")
+st.markdown('<link rel="manifest" href="/app/static/manifest.json">', unsafe_allow_html=True)
 
 st.sidebar.title("Menu")
 page_choisie = st.sidebar.radio("Aller vers :", [
