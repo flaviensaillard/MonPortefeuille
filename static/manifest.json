@@ -1,0 +1,20 @@
+{
+  "short_name": "Porte-feuille",
+  "name": "Porte-feuille",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/flaviensaillard/MonPortefeuille/main/favicon_512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "https://monportefeuille-h2gdzumn4h6h2hfd9svjzx.streamlit.app/",
+  "display": "fullscreen",
+  "theme_color": "#0e1117",
+  "background_color": "#0e1117",
+  "description": "Gestion de porte-feuille par rebalancement",
+  "dir": "auto",
+  "lang": "fr",
+  "orientation": "portrait",
+  "categories": ["finance"]
+}
