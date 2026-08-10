@@ -24,7 +24,12 @@ logger = logging.getLogger(__name__)
 
 # --- 1. CONFIGURATION ET CONSTANTES ---
 st.set_page_config(page_title="Mon Portefeuille", layout="wide")
-st.markdown('<link rel="manifest" href="https://raw.githubusercontent.com/flaviensaillard/MonPortefeuille/main/static/manifest.json">', unsafe_allow_html=True)
+st.markdown("""
+<link rel="icon" type="image/png" sizes="512x512" href="https://raw.githubusercontent.com/flaviensaillard/MonPortefeuille/main/favicon_512.png">
+<link rel="apple-touch-icon" sizes="512x512" href="https://raw.githubusercontent.com/flaviensaillard/MonPortefeuille/main/favicon_512.png">
+<link rel="manifest" href="https://raw.githubusercontent.com/flaviensaillard/MonPortefeuille/main/static/manifest.json">
+<meta name="theme-color" content="#0e1117">
+""", unsafe_allow_html=True)
 
 st.sidebar.title("Menu")
 page_choisie = st.sidebar.radio("Aller vers :", [
