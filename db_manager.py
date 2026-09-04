@@ -55,15 +55,15 @@ def load_sheet(table_name, default_cols):
 def save_sheet(table_name, df, max_retries=2):
     """
     Sauvegarde sécurisée :
-    - Pour la table 'Donnees', on utilise UPSERT sur la colonne 'Ticker'.
-      Cela évite de supprimer les lignes existantes et donc de perdre des actifs.
-    - Pour les autres tables, on garde DELETE+INSERT avec backup mémoire en cas d'échec.
+    - Pour 'Donnees', on met à jour par Ticker existant, on ajoute les nouveaux,
+      sans supprimer les autres.
+    - Pour les autres tables, on garde DELETE + INSERT avec backup mémoire.
     """
     supabase = get_supabase_client()
     try:
         df_clean = df.copy().replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
-        # Protection anti-zéros : on ne sauvegarde pas une ligne dont le prix est vide
+        # Protection anti-zéros : on n'écrit jamais une ligne sans prix
         if table_name == "Donnees" and "Court" in df_clean.columns:
             df_clean = df_clean[df_clean["Court"].apply(
                 lambda x: "0.00" not in str(x) and "$ 0.00" not in str(x)
@@ -74,13 +74,31 @@ def save_sheet(table_name, df, max_retries=2):
 
         records = df_clean.to_dict('records')
 
-        # ========== TABLE DONNEES : UPSERT PAR TICKER ==========
+        # ---------- TABLE DONNEES : UPDATE + INSERT ciblés ----------
         if table_name == "Donnees":
-            # Met à jour si le Ticker existe déjà, sinon insère une nouvelle ligne.
-            # Les autres actifs déjà présents dans Supabase ne sont pas touchés.
-            supabase.table("Donnees").upsert(records, on_conflict="Ticker").execute()
+            # 1. Récupérer les Tickers et IDs existants
+            existing_resp = supabase.table("Donnees").select("id, Ticker").execute()
+            existing_map = {row["Ticker"]: row["id"] for row in (existing_resp.data or [])}
+
+            # 2. Pour chaque enregistrement à sauvegarder
+            for rec in records:
+                ticker = rec.get("Ticker")
+                if not ticker:
+                    continue  # on ignore les lignes sans Ticker
+
+                # Vérifier s'il y a un id correspondant
+                existing_id = existing_map.get(ticker)
+
+                if existing_id is not None:
+                    # Mettre à jour la ligne existante
+                    supabase.table("Donnees").update(rec).eq("id", existing_id).execute()
+                else:
+                    # Insérer une nouvelle ligne
+                    supabase.table("Donnees").insert(rec).execute()
+
+            # 3. On ne supprime AUCUNE ligne ici (protection contre la perte)
         else:
-            # ========== AUTRES TABLES : DELETE + INSERT ==========
+            # ---------- AUTRES TABLES : DELETE + INSERT ----------
             existing = supabase.table(table_name).select("id").execute()
             existing_ids = [row["id"] for row in (existing.data or [])]
 
@@ -94,13 +112,12 @@ def save_sheet(table_name, df, max_retries=2):
                     batch = records[i:i+100]
                     supabase.table(table_name).insert(batch).execute()
 
-        # Invalider le cache pour forcer le rechargement
         load_sheet.clear()
         return True
 
     except Exception as e:
         st.session_state[f"backup_{table_name}"] = df.copy()
-        st.error(f"⚠️ Erreur de sauvegarde sur {table_name}. Données en mémoire.")
+        st.error(f"⚠️ Erreur de sauvegarde sur {table_name}: {e}")
         return False
 
 def append_to_sheet(table_name, new_row_dict):
